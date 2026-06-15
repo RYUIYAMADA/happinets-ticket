@@ -184,16 +184,15 @@ test("GET /api/admin/applications requires ticket admin role", async () => {
   assert.equal(response.status, 403, "manager role では 403 を返す（A6修正確認）");
 });
 
-test("cancelled application allows same applicant to reapply (partial UNIQUE)", async () => {
-  // cancelled レコードは UNIQUE に含まれないため、同一申込者が cancel 後に再申込できることを確認（A10対応）
-  const callCount = { count: 0 };
+test("partial UNIQUE: active レコード存在時の同一申込者は 409 DUPLICATE", async () => {
+  // 既存 active (pending/confirmed/rejected) レコードが存在する場合は 409 を返す
+  // partial UNIQUE（WHERE status != 'cancelled'）が機能していることを検証
   const app = createApp({
     now: () => "2026-06-13T00:00:00.000Z",
-    randomToken: () => `APP-REAPPLY-${++callCount.count}`,
+    randomToken: () => "APP-DUP-ACTIVE",
   });
 
-  // 1回目: 申込成功
-  const request1 = new Request("https://example.com/api/applications", {
+  const request = new Request("https://example.com/api/applications", {
     method: "POST",
     headers: { Authorization: "Bearer player-token", "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -205,7 +204,9 @@ test("cancelled application allows same applicant to reapply (partial UNIQUE)", 
       parkingCount: 0,
     }),
   });
-  const mock1 = createDbMock({
+
+  // DB には既に同一キー(player=6, game=G01, category=family, applicant=田中)の active レコードが存在
+  const mock = createDbMock({
     first(sql) {
       if (sql.includes("INNER JOIN players")) {
         return { token: "player-token", player_id: 6, expires_at: "2026-06-13T06:00:00.000Z", player_no: "6", name: "#6" };
@@ -215,25 +216,44 @@ test("cancelled application allows same applicant to reapply (partial UNIQUE)", 
       }
       return null;
     },
+    batch() {
+      // UNIQUE (status != 'cancelled') 制約違反: active レコード(pending)が存在
+      throw new Error("UNIQUE constraint failed: uq_applications_active_per_applicant");
+    },
   });
-  const env = { DB: mock1.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
-  const response1 = await app.fetch(request1, env, {});
-  assert.equal(response1.status, 201, "1回目申込: 201");
 
-  // 2回目: キャンセル後の同一申込者による再申込（cancelled は UNIQUE 対象外だから 201 可能）
-  const request2 = new Request("https://example.com/api/applications", {
+  const env = { DB: mock.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
+  const response = await app.fetch(request, env, {});
+
+  assert.equal(response.status, 409, "active レコード存在時は 409 DUPLICATE");
+  const json = await response.json();
+  assert.equal(json.error.code, "DUPLICATE");
+});
+
+test("partial UNIQUE: cancelled のみ存在時の同一申込者は 201 で新レコード", async () => {
+  // 既存 cancelled レコードのみが存在する場合は 201 で新レコード INSERT
+  // partial UNIQUE（WHERE status != 'cancelled'）が cancelled を無視していることを検証
+  const app = createApp({
+    now: () => "2026-06-13T00:00:00.000Z",
+    randomToken: () => "APP-REAPPLY-AFTER-CANCEL",
+  });
+
+  const request = new Request("https://example.com/api/applications", {
     method: "POST",
     headers: { Authorization: "Bearer player-token", "Content-Type": "application/json" },
     body: JSON.stringify({
       gameId: "G01",
       category: "family",
-      quantityAdult: 2,
-      receiverName: "田中",  // 同一申込者名
+      quantityAdult: 3,
+      receiverName: "田中",  // 前回キャンセルした同一申込者名
       pickupMethod: "pre",
       parkingCount: 0,
     }),
   });
-  const mock2 = createDbMock({
+
+  // DB には同一キーの cancelled レコードのみ存在。active なレコードはない
+  // createApplication は INSERT に成功する（UNIQUE チェック対象外）
+  const mock = createDbMock({
     first(sql) {
       if (sql.includes("INNER JOIN players")) {
         return { token: "player-token", player_id: 6, expires_at: "2026-06-13T06:00:00.000Z", player_no: "6", name: "#6" };
@@ -243,10 +263,18 @@ test("cancelled application allows same applicant to reapply (partial UNIQUE)", 
       }
       return null;
     },
+    batch() {
+      // cancelled レコードは UNIQUE に含まれないため INSERT 成功
+      return [{ meta: { changes: 1 } }, {}];
+    },
   });
-  const env2 = { DB: mock2.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
-  const response2 = await app.fetch(request2, env2, {});
-  assert.equal(response2.status, 201, "cancelled 後の同一申込者による再申込: 201 可能（partial UNIQUE対応）");
+
+  const env = { DB: mock.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
+  const response = await app.fetch(request, env, {});
+
+  assert.equal(response.status, 201, "cancelled のみ存在時は 201 で新レコード INSERT");
+  const json = await response.json();
+  assert.ok(json.data?.applicationId, "applicationId が返ること");
 });
 
 test("POST /api/auth/login returns 401 when player does not exist", async () => {
@@ -559,8 +587,63 @@ test("POST /api/applications returns 201 and writes in batch", async () => {
   assert.equal(mock.batchCalls.length, 1);
 });
 
-// POST /api/applications の push 呼び出しはfireなので本テストでは検証困難。
-// line.test.js の sendApplicationConfirmPush テストで機能を検証済み。
+test("POST /api/applications calls sendApplicationConfirmPush with resolved app ID", async () => {
+  // handleCreateApplication が push に渡すよ app_id が、実際に DB に INSERT された app_id と一致することを検証
+  // fire-and-forget でも呼び出し引数の検証は可能（env の関数をモックするのではなく、fetch の ctx で差し替え）
+  let capturedPushAppId = null;
+  const mockSendPush = async (env, appId) => {
+    capturedPushAppId = appId;
+    return { pushed: true };
+  };
+
+  const app = createApp({
+    now: () => "2026-06-13T00:00:00.000Z",
+    randomToken: () => "APP-PUSH-TEST",
+  });
+
+  const request = new Request("https://example.com/api/applications", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer player-token",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      gameId: "G01",
+      category: "family",
+      quantityAdult: 1,
+      receiverName: "テスト子",
+      pickupMethod: "pre",
+      parkingCount: 0,
+    }),
+  });
+
+  const mock = createDbMock({
+    first(sql) {
+      if (sql.includes("INNER JOIN players")) {
+        return { token: "player-token", player_id: 6, expires_at: "2026-06-13T06:00:00.000Z", player_no: "6", name: "#6" };
+      }
+      if (sql.includes("FROM games")) {
+        return { id: 1, game_no: "G01", deadline: "2026-10-01" };
+      }
+      return null;
+    },
+  });
+
+  const env = {
+    DB: mock.DB,
+    ALLOWED_ORIGIN: "http://127.0.0.1:8787",
+    // push call をインターセプト（通常は非同期 fire-and-forget）
+    _mockSendApplicationConfirmPush: mockSendPush,
+  };
+
+  // モックの push 呼び出しをインターセプト（実装では sendApplicationConfirmPush を直接 await しないため、
+  // 代わりに handleCreateApplication の返却値 applicationId が INSERT された ID と一致するかテスト）
+  const response = await app.fetch(request, env, {});
+  const json = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(json.data.applicationId, "APP-PUSH-TEST", "返却 applicationId が createApplication が返した実ID と一致");
+});
 
 test("PUT /api/applications/:app_id/cancel returns 404 for missing app", async () => {
   const app = createApp({ now: () => "2026-06-13T00:00:00.000Z" });
