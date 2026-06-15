@@ -2463,7 +2463,7 @@ function buildInviteGrid() {
 
   const gameRows = visible.slice(0, displayCount).map(g => {
     if (g.isDeadlinePassed) {
-      return `<div class="game-card-row row-closed" data-game="${esc(g.gameId)}" style="opacity: 0.6; pointer-events: none;">
+      return `<div class="game-card-row row-disabled" data-game="${esc(g.gameId)}" style="opacity: 0.6; pointer-events: none;">
         <div class="game-card-top">
           <div class="game-card-info">
             <div class="game-date">${esc(formatGameDate(g.date))}（${esc(formatDayOfWeek(g.dayOfWeek))}）</div>
@@ -2544,7 +2544,7 @@ function buildFamilyGrid() {
 
   const gameRows = visible.slice(0, displayCount).map(g => {
     if (g.isDeadlinePassed) {
-      return `<div class="game-card-row row-closed" data-game="${esc(g.gameId)}" style="opacity: 0.6; pointer-events: none;">
+      return `<div class="game-card-row row-disabled" data-game="${esc(g.gameId)}" style="opacity: 0.6; pointer-events: none;">
         <div class="game-card-top">
           <div class="game-card-info">
             <div class="game-date">${esc(formatGameDate(g.date))}（${esc(formatDayOfWeek(g.dayOfWeek))}）</div>

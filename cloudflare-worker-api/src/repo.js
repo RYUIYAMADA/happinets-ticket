@@ -131,26 +131,30 @@ export async function createApplication(db, playerSession, payload, appId, nowIs
     throw new HttpError(410, "DEADLINE_PASSED", "Deadline passed");
   }
 
-  // 申込は常に新規INSERT（統合・加算しない）。
-  // 毎回別レコードにすることで受取人上書きバグと確認push未達を根治する。
+  // 申込者名: receiverName を申込者名として使用（受取人兼申込者）
+  // 同一 (player_id, game_id, category, applicant_name) への重複はUNIQUE制約で 409 を返す
+  const applicantName = String(payload.receiverName || payload.applicantName || "");
+
   const statements = [
     db.prepare(
       `INSERT INTO applications (
-        app_id, player_id, game_id, category, quantity_adult, quantity_child, quantity_infant,
+        app_id, player_id, game_id, category, applicant_name,
+        quantity_adult, quantity_child, quantity_infant,
         seat_type, seat_request, receivers, pickup_method, payment_method, parking, note,
         status, lang, source, created_at, updated_at
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'pending', ?15, ?16, ?17, ?18)`
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 'pending', ?16, ?17, ?18, ?19)`
     ).bind(
       appId,
       playerSession.player_id,
       game.id,
       payload.category,
+      applicantName,
       payload.quantityAdult,
       payload.quantityChild,
       payload.quantityInfant,
       payload.seatType,
       payload.seatRequest,
-      JSON.stringify(payload.receiverName ? [{ name: payload.receiverName }] : []),
+      JSON.stringify(applicantName ? [{ name: applicantName }] : []),
       payload.pickupMethod,
       payload.paymentMethod,
       payload.parkingCount,
@@ -163,13 +167,22 @@ export async function createApplication(db, playerSession, payload, appId, nowIs
     audit(db, `player:${playerSession.player_id}`, "submit", `application:${appId}`, {
       gameNo: game.game_no,
       category: payload.category,
-      action: 'new'
+      applicantName,
+      action: 'new',
     }),
   ];
 
-  await db.batch(statements);
+  try {
+    await db.batch(statements);
+  } catch (err) {
+    // UNIQUE 制約違反 → 同一申込者が同試合・同種別に重複申込
+    if (err?.message?.includes("UNIQUE constraint failed")) {
+      throw new HttpError(409, "DUPLICATE", "Duplicate application for same applicant");
+    }
+    throw err;
+  }
 
-  // 常に新規INSERTした appId を返す
+  // INSERT した appId をそのまま返す（push 通知の app_id として使用）
   return { appId };
 }
 
@@ -225,8 +238,10 @@ export async function cancelApplication(db, appId, playerId, nowIso) {
 }
 
 export async function listApplicationsByPlayer(db, playerId) {
+  // B2修正: cancelled を除外（ダッシュボードに不要な取消済み申込を表示しない）
   const result = await db.prepare(applicationQuery(`
     WHERE a.player_id = ?1
+      AND a.status != 'cancelled'
   `)).bind(playerId).all();
   return (result.results || []).map(mapApplicationRow);
 }
@@ -310,9 +325,13 @@ export async function findApplicationForConfirmPush(db, appId) {
   ).bind(appId).first();
   if (!row) return null;
 
-  // 種別ごとの累計枚数: 同選手 × 同試合 の cancelled 以外の quantity_adult を category 別に集計
+  // 種別ごとの累計枚数: 同選手 × 同試合 の cancelled 以外の全枚数を category 別に集計
+  // A9修正: quantity_adult のみでなく adult+child+infant の合計を累計とする
   const totalRows = await db.prepare(
-    `SELECT category, COALESCE(SUM(quantity_adult), 0) AS total
+    `SELECT category,
+            COALESCE(SUM(quantity_adult), 0)  AS total_adult,
+            COALESCE(SUM(quantity_child), 0)  AS total_child,
+            COALESCE(SUM(quantity_infant), 0) AS total_infant
      FROM applications
      WHERE player_id = ?1
        AND game_id = ?2
@@ -323,7 +342,7 @@ export async function findApplicationForConfirmPush(db, appId) {
   const categoryTotals = { invite: 0, family: 0, paid: 0 };
   for (const r of (totalRows?.results || [])) {
     if (r.category in categoryTotals) {
-      categoryTotals[r.category] = Number(r.total || 0);
+      categoryTotals[r.category] = Number(r.total_adult || 0) + Number(r.total_child || 0) + Number(r.total_infant || 0);
     }
   }
 
@@ -669,6 +688,7 @@ function applicationQuery(whereClause) {
       g.day_of_week AS game_day_of_week,
       g.opponent,
       a.category,
+      a.applicant_name,
       a.quantity_adult,
       a.quantity_child,
       a.quantity_infant,

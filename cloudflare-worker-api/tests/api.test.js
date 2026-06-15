@@ -97,6 +97,7 @@ test("mapApplicationRow returns API contract shape", () => {
     game_day_of_week: "木",
     opponent: "川崎ブレイブサンダース",
     category: "family",
+    applicant_name: "赤穂 由美",
     quantity_adult: 2,
     quantity_child: 1,
     quantity_infant: 0,
@@ -118,6 +119,69 @@ test("mapApplicationRow returns API contract shape", () => {
   assert.equal(app.playerId, "6");
   assert.equal(app.playerNo, "006");
   assert.equal(app.gameLabel, "10月8日（木）vs 川崎ブレイブサンダース");
+  assert.equal(app.applicantName, "赤穂 由美", "applicantName が返ること（別レコード化対応）");
+});
+
+test("POST /api/applications returns 409 when same applicant tries to apply twice", async () => {
+  const app = createApp({
+    now: () => "2026-06-13T00:00:00.000Z",
+    randomToken: () => "APP-DUP",
+  });
+  const request = new Request("https://example.com/api/applications", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer player-token",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      gameId: "G01",
+      category: "family",
+      quantityAdult: 2,
+      receiverName: "田中",
+      pickupMethod: "pre",
+      parkingCount: 0,
+    }),
+  });
+  // batch が UNIQUE 制約違反エラーを throw するシミュレーション
+  const mock = createDbMock({
+    first(sql) {
+      if (sql.includes("INNER JOIN players")) {
+        return { token: "player-token", player_id: 6, expires_at: "2026-06-13T06:00:00.000Z", player_no: "6", name: "#6" };
+      }
+      if (sql.includes("FROM games")) {
+        return { id: 1, game_no: "G01", deadline: "2026-10-01" };
+      }
+      return null;
+    },
+    batch() {
+      throw new Error("UNIQUE constraint failed: applications.player_id, applications.game_id, applications.category, applications.applicant_name");
+    },
+  });
+  const env = { DB: mock.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
+
+  const response = await app.fetch(request, env, {});
+  const json = await response.json();
+  assert.equal(response.status, 409, "重複申込は 409 を返す");
+  assert.equal(json.error.code, "DUPLICATE");
+});
+
+test("GET /api/admin/applications requires ticket admin role", async () => {
+  // manager role (非 ticket) では 403 になること (A6: requireTicketAdmin 追加)
+  const app = createApp({ now: () => "2026-06-13T00:00:00.000Z" });
+  const request = new Request("https://example.com/api/admin/applications", {
+    headers: { Authorization: "Bearer manager-token" },
+  });
+  const mock = createDbMock({
+    first(sql) {
+      if (sql.includes("FROM admin_sessions")) {
+        return { token: "manager-token", admin_role: "manager", expires_at: "2099-06-13T06:00:00.000Z" };
+      }
+      return null;
+    },
+  });
+  const env = { DB: mock.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
+  const response = await app.fetch(request, env, {});
+  assert.equal(response.status, 403, "manager role では 403 を返す（A6修正確認）");
 });
 
 test("POST /api/auth/login returns 401 when player does not exist", async () => {

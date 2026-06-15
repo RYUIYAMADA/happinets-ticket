@@ -516,8 +516,11 @@ test("sendApplicationConfirmPush: ja言語で正しい文面・枚数をpush", a
             },
             async all() {
               if (sql.includes("GROUP BY category")) {
-                // 今回2枚含む家族席累計 = 5枚、招待 = 3枚
-                return { results: [{ category: "family", total: 5 }, { category: "invite", total: 3 }] };
+                // 今回2枚含む家族席累計 = 5枚、招待 = 3枚（A9修正後: total_adult/child/infant 形式）
+                return { results: [
+                  { category: "family", total_adult: 5, total_child: 0, total_infant: 0 },
+                  { category: "invite", total_adult: 3, total_child: 0, total_infant: 0 },
+                ]};
               }
               return { results: [] };
             },
@@ -586,7 +589,7 @@ test("sendApplicationConfirmPush: en言語で英語文面をpush", async () => {
             },
             async all() {
               if (sql.includes("GROUP BY category")) {
-                return { results: [{ category: "invite", total: 3 }] };
+                return { results: [{ category: "invite", total_adult: 3, total_child: 0, total_infant: 0 }] };
               }
               return { results: [] };
             },

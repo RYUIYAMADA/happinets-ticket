@@ -1744,7 +1744,7 @@ function editApp(gameId, type) {
 }
 
 async function cancelApp(applicationId, gameId) {
-  if (!confirm('この申込をキャンセルしますか？')) return;
+  if (!confirm(t('cancelConfirm'))) return;
   try {
     const result = await workerApiClient.cancelApplication(applicationId);
     if (workerApiClient.isUnauthorizedResult(result)) {

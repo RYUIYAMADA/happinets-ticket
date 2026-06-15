@@ -463,6 +463,8 @@ async function handleListOwnApplications(request, url, env, origin, nowIso) {
 async function handleAdminApplications(request, url, env, origin, nowIso) {
   const auth = await requireAdminSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
+  // A6修正: requireTicketAdmin を追加（管理者認可）
+  requireTicketAdmin(auth.session);
   return ok(await listAdminApplications(env.DB, {
     gameId: url.searchParams.get("gameId") || "",
     category: url.searchParams.get("category") || "",
@@ -584,6 +586,8 @@ async function handleAnnounceDeadline(request, url, env, origin, nowIso) {
 async function handleAdminExport(request, url, env, origin, nowIso) {
   const auth = await requireAdminSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
+  // A6修正: requireTicketAdmin を追加（管理者認可）
+  requireTicketAdmin(auth.session);
 
   const category = url.searchParams.get("category") || "";
   const VALID_EXPORT_CATEGORIES = ["invite", "family", "paid"];
@@ -645,7 +649,13 @@ async function handleAdminExport(request, url, env, origin, nowIso) {
   function csvEscape(v) {
     if (v === null || v === undefined) return "";
     const s = String(v);
-    if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+    // A4修正: CSV式インジェクション対策。先頭が =/+/-/@ の場合はシングルクォートを前置
+    const needsQuote = s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r");
+    const injectionChars = /^[=+\-@\t\r]/;
+    if (injectionChars.test(s)) {
+      return "'" + (needsQuote ? '"' + s.replace(/"/g, '""') + '"' : s);
+    }
+    if (needsQuote) {
       return '"' + s.replace(/"/g, '""') + '"';
     }
     return s;
