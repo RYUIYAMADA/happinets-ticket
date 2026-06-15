@@ -146,13 +146,17 @@ function doGet(e) {
           });
           const uploadCode = uploadRes.getResponseCode();
           if (uploadCode !== 200) {
-            // (b) ロールバック: メニュー削除
-            UrlFetchApp.fetch('https://api.line.me/v2/bot/richmenu/' + rid, {
+            // (b) ロールバック: メニュー削除（結果確認）
+            const deleteRes = UrlFetchApp.fetch('https://api.line.me/v2/bot/richmenu/' + rid, {
               method: 'DELETE',
               headers: { 'Authorization': 'Bearer ' + lineToken },
               muteHttpExceptions: true
             });
-            result = { ok: false, error: 'image upload failed: ' + uploadCode + ' (menu rolled back)' }; break;
+            const deleteCode = deleteRes.getResponseCode();
+            const errorMsg = deleteCode === 200
+              ? 'image upload failed: ' + uploadCode + ' (menu rolled back successfully)'
+              : 'image upload failed: ' + uploadCode + ' (rollback DELETE failed: ' + deleteCode + ' - orphan rich menu risk, menuId: ' + rid + ')';
+            result = { ok: false, error: errorMsg }; break;
           }
           // デフォルト設定
           const defaultRes = UrlFetchApp.fetch('https://api.line.me/v2/bot/user/all/richmenu/' + rid, {
@@ -160,13 +164,17 @@ function doGet(e) {
           });
           const defaultCode = defaultRes.getResponseCode();
           if (defaultCode !== 200) {
-            // (b) ロールバック: メニュー削除
-            UrlFetchApp.fetch('https://api.line.me/v2/bot/richmenu/' + rid, {
+            // (b) ロールバック: メニュー削除（結果確認）
+            const deleteRes = UrlFetchApp.fetch('https://api.line.me/v2/bot/richmenu/' + rid, {
               method: 'DELETE',
               headers: { 'Authorization': 'Bearer ' + lineToken },
               muteHttpExceptions: true
             });
-            result = { ok: false, error: 'default menu set failed: ' + defaultCode + ' (menu rolled back)' }; break;
+            const deleteCode = deleteRes.getResponseCode();
+            const errorMsg = deleteCode === 200
+              ? 'default menu set failed: ' + defaultCode + ' (menu rolled back successfully)'
+              : 'default menu set failed: ' + defaultCode + ' (rollback DELETE failed: ' + deleteCode + ' - orphan rich menu risk, menuId: ' + rid + ')';
+            result = { ok: false, error: errorMsg }; break;
           }
           // (c) 全段階成功時のみ ID 保存
           PropertiesService.getScriptProperties().setProperty('LINE_RICH_MENU_ID', rid);
