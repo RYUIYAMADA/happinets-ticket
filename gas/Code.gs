@@ -115,6 +115,9 @@ function doGet(e) {
         } else if (task === 'createRichMenuDirect') {
           const lineToken = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
           if (!lineToken) { result = { ok: false, error: 'LINE_CHANNEL_ACCESS_TOKEN not set' }; break; }
+          // (a) 前提検証：作成前に b64 をチェック
+          const b64 = PropertiesService.getScriptProperties().getProperty('RICH_MENU_IMAGE_BASE64');
+          if (!b64) { result = { ok: false, error: 'RICH_MENU_IMAGE_BASE64 not set' }; break; }
           const menuBody = {
             size: { width: 2500, height: 1686 }, selected: true,
             name: 'ハピネッツ家族チケット', chatBarText: 'チケットメニュー',
@@ -132,12 +135,9 @@ function doGet(e) {
           });
           const crCode = cr.getResponseCode();
           const crBody = JSON.parse(cr.getContentText());
-          if (crCode !== 200) { result = { ok: false, error: crBody }; break; }
+          if (crCode !== 200) { result = { ok: false, error: 'create menu failed: ' + crCode }; break; }
           const rid = crBody.richMenuId;
-          PropertiesService.getScriptProperties().setProperty('LINE_RICH_MENU_ID', rid);
           // 画像アップロード
-          const b64 = PropertiesService.getScriptProperties().getProperty('RICH_MENU_IMAGE_BASE64');
-          if (!b64) { result = { ok: false, error: 'RICH_MENU_IMAGE_BASE64 not set' }; break; }
           const imgBlob = Utilities.newBlob(Utilities.base64Decode(b64), 'image/png', 'rich-menu.png');
           const uploadRes = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/richmenu/' + rid + '/content', {
             method: 'POST',
@@ -145,13 +145,31 @@ function doGet(e) {
             payload: imgBlob.getBytes(), muteHttpExceptions: true
           });
           const uploadCode = uploadRes.getResponseCode();
-          if (uploadCode !== 200) { result = { ok: false, error: 'image upload failed: ' + uploadCode }; break; }
+          if (uploadCode !== 200) {
+            // (b) ロールバック: メニュー削除
+            UrlFetchApp.fetch('https://api.line.me/v2/bot/richmenu/' + rid, {
+              method: 'DELETE',
+              headers: { 'Authorization': 'Bearer ' + lineToken },
+              muteHttpExceptions: true
+            });
+            result = { ok: false, error: 'image upload failed: ' + uploadCode + ' (menu rolled back)' }; break;
+          }
           // デフォルト設定
           const defaultRes = UrlFetchApp.fetch('https://api.line.me/v2/bot/user/all/richmenu/' + rid, {
             method: 'POST', headers: { 'Authorization': 'Bearer ' + lineToken }, muteHttpExceptions: true
           });
           const defaultCode = defaultRes.getResponseCode();
-          if (defaultCode !== 200) { result = { ok: false, error: 'default menu set failed: ' + defaultCode }; break; }
+          if (defaultCode !== 200) {
+            // (b) ロールバック: メニュー削除
+            UrlFetchApp.fetch('https://api.line.me/v2/bot/richmenu/' + rid, {
+              method: 'DELETE',
+              headers: { 'Authorization': 'Bearer ' + lineToken },
+              muteHttpExceptions: true
+            });
+            result = { ok: false, error: 'default menu set failed: ' + defaultCode + ' (menu rolled back)' }; break;
+          }
+          // (c) 全段階成功時のみ ID 保存
+          PropertiesService.getScriptProperties().setProperty('LINE_RICH_MENU_ID', rid);
           result = { ok: true, done: 'createRichMenuDirect', richMenuId: rid };
         } else {
           result = { ok: false, error: 'unknown task: ' + task };
