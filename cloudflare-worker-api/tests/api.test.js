@@ -184,6 +184,71 @@ test("GET /api/admin/applications requires ticket admin role", async () => {
   assert.equal(response.status, 403, "manager role では 403 を返す（A6修正確認）");
 });
 
+test("cancelled application allows same applicant to reapply (partial UNIQUE)", async () => {
+  // cancelled レコードは UNIQUE に含まれないため、同一申込者が cancel 後に再申込できることを確認（A10対応）
+  const callCount = { count: 0 };
+  const app = createApp({
+    now: () => "2026-06-13T00:00:00.000Z",
+    randomToken: () => `APP-REAPPLY-${++callCount.count}`,
+  });
+
+  // 1回目: 申込成功
+  const request1 = new Request("https://example.com/api/applications", {
+    method: "POST",
+    headers: { Authorization: "Bearer player-token", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      gameId: "G01",
+      category: "family",
+      quantityAdult: 2,
+      receiverName: "田中",
+      pickupMethod: "pre",
+      parkingCount: 0,
+    }),
+  });
+  const mock1 = createDbMock({
+    first(sql) {
+      if (sql.includes("INNER JOIN players")) {
+        return { token: "player-token", player_id: 6, expires_at: "2026-06-13T06:00:00.000Z", player_no: "6", name: "#6" };
+      }
+      if (sql.includes("FROM games")) {
+        return { id: 1, game_no: "G01", deadline: "2026-10-01" };
+      }
+      return null;
+    },
+  });
+  const env = { DB: mock1.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
+  const response1 = await app.fetch(request1, env, {});
+  assert.equal(response1.status, 201, "1回目申込: 201");
+
+  // 2回目: キャンセル後の同一申込者による再申込（cancelled は UNIQUE 対象外だから 201 可能）
+  const request2 = new Request("https://example.com/api/applications", {
+    method: "POST",
+    headers: { Authorization: "Bearer player-token", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      gameId: "G01",
+      category: "family",
+      quantityAdult: 2,
+      receiverName: "田中",  // 同一申込者名
+      pickupMethod: "pre",
+      parkingCount: 0,
+    }),
+  });
+  const mock2 = createDbMock({
+    first(sql) {
+      if (sql.includes("INNER JOIN players")) {
+        return { token: "player-token", player_id: 6, expires_at: "2026-06-13T06:00:00.000Z", player_no: "6", name: "#6" };
+      }
+      if (sql.includes("FROM games")) {
+        return { id: 1, game_no: "G01", deadline: "2026-10-01" };
+      }
+      return null;
+    },
+  });
+  const env2 = { DB: mock2.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
+  const response2 = await app.fetch(request2, env2, {});
+  assert.equal(response2.status, 201, "cancelled 後の同一申込者による再申込: 201 可能（partial UNIQUE対応）");
+});
+
 test("POST /api/auth/login returns 401 when player does not exist", async () => {
   const app = createApp({
     now: () => "2026-06-13T00:00:00.000Z",

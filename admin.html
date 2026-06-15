@@ -943,7 +943,7 @@
       <div class="table-wrap">
         <table>
           <thead><tr id="app-thead-row">
-            <th scope="col" aria-sort="none">申込ID</th><th scope="col" aria-sort="none">選手</th><th scope="col" aria-sort="none">試合</th><th scope="col" aria-sort="none">種別</th><th scope="col" aria-sort="none">枚数</th><th scope="col" aria-sort="none">受取者</th><th scope="col" aria-sort="none">受取方法</th><th scope="col" aria-sort="none">備考</th><th scope="col" aria-sort="none">申込日時</th><th scope="col" aria-sort="none">ステータス</th>
+            <th scope="col" aria-sort="none">申込ID</th><th scope="col" aria-sort="none">選手</th><th scope="col" aria-sort="none">試合</th><th scope="col" aria-sort="none">種別</th><th scope="col" aria-sort="none">枚数</th><th scope="col" aria-sort="none">申込者名</th><th scope="col" aria-sort="none">受取方法</th><th scope="col" aria-sort="none">備考</th><th scope="col" aria-sort="none">申込日時</th><th scope="col" aria-sort="none">ステータス</th>
           </tr></thead>
           <tbody id="app-tbody">
             <tr><td colspan="10" class="empty-msg"><span class="spinner"></span></td></tr>
@@ -1710,6 +1710,7 @@ function buildAppRow(a, compact) {
       <dl class="mobile-details">
         <div><dt>申込ID</dt><dd>${a.applicationId}</dd></div>
         <div><dt>種別</dt><dd>${TICKET_LABELS[a.ticketType] || a.ticketType}</dd></div>
+        ${a.applicantName ? `<div><dt>申込者名</dt><dd>${esc(a.applicantName)}</dd></div>` : ''}
         <div><dt>受取者</dt><dd>${esc(getReceiverNames(a))}</dd></div>
         <div><dt>受取方法</dt><dd>${pickup || '—'}</dd></div>
         ${compact ? '' : `<div><dt>備考</dt><dd>${esc(a.note) || '—'}</dd></div>`}
@@ -1732,7 +1733,7 @@ function buildAppRow(a, compact) {
       <td>${esc(getGameLabel(a.gameId))}</td>
       <td>${typeBadge}</td>
       <td class="qty-cell">${qtyCell}</td>
-      <td>${esc(getReceiverNames(a))}</td>
+      <td>${esc(a.applicantName || getReceiverNames(a))}</td>
       <td>${esc(pickup)}</td>
       <td style="font-size:12px">${esc(a.createdAt) || '—'}</td>
       <td>${statusSel}${mobileToggle}</td>
@@ -1744,7 +1745,7 @@ function buildAppRow(a, compact) {
     <td>${esc(getGameLabel(a.gameId))}</td>
     <td>${typeBadge}</td>
     <td class="qty-cell">${qtyCell}</td>
-    <td>${esc(getReceiverNames(a))}</td>
+    <td>${esc(a.applicantName || getReceiverNames(a))}</td>
     <td>${esc(pickup)}</td>
     <td style="font-size:12px; max-width:100px; word-break:break-all">${esc(a.note) || '—'}</td>
     <td style="font-size:12px">${esc(a.createdAt) || '—'}</td>

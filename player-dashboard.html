@@ -1250,6 +1250,7 @@ STRINGS.ja = {
   changeQtySave: '保存',
   changeQtyCancel: '閉じる',
   deadlinePassed: '受付終了',
+  applicantName: '申込者名',
 };
 STRINGS.en = {
   title: 'Request Status Dashboard',
@@ -1301,6 +1302,7 @@ STRINGS.en = {
   changeQtySave: 'Save',
   changeQtyCancel: 'Close',
   deadlinePassed: 'Closed',
+  applicantName: 'Applicant Name',
 };
 // ────────────────────────────────────────────────────
 
@@ -1673,6 +1675,7 @@ function buildTicketSection(app, type, gameId, isPassed) {
         <span class="badge ${cfg.cls}">${statusLabelHtml(app.status)}</span>
       </div>
       <div class="detail-row"><span class="detail-label">${t('detailQty')}</span><span class="detail-value">${qtyText}${seatText}</span></div>
+      ${app.applicantName ? `<div class="detail-row"><span class="detail-label">${t('applicantName') || '申込者名'}</span><span class="detail-value">${esc(app.applicantName)}</span></div>` : ''}
       <div class="detail-row"><span class="detail-label">${t('detailReceiver')}</span><span class="detail-value">${esc(app.receiverName) || '—'}</span></div>
       <div class="detail-row"><span class="detail-label">${t('detailPickup')}</span><span class="detail-value">${pickupLabel}</span></div>
       ${app.note ? `<div class="detail-row"><span class="detail-label">${t('detailNote')}</span><span class="detail-value">${esc(app.note)}</span></div>` : ''}
