@@ -1686,8 +1686,12 @@ function buildTicketSection(app, type, gameId, isPassed) {
 
 function buildGameCard(g) {
   const appList = getApps(g.gameId);
+  // 別レコード化対応: 同一種別の複数レコード（申込者名ごと）をすべて表示
   const appByType = {};
-  appList.forEach(a => { appByType[a.ticketType] = a; });
+  appList.forEach(a => {
+    if (!appByType[a.ticketType]) appByType[a.ticketType] = [];
+    appByType[a.ticketType].push(a);
+  });
   const types = ['invite', 'family', 'paid'];
   const hasAny = appList.length > 0;
 
@@ -1695,17 +1699,20 @@ function buildGameCard(g) {
     ? tf('deadlineFormat', { date: formatDate(g.deadline) }) + (g.isDeadlinePassed ? t('deadlineEnded') : '')
     : t('deadlineUnset');
 
-  // ヘッダーの3種別ピル
+  // ヘッダーの3種別ピル: 種別に1件以上申込がある場合のみピルを表示
   const pillsHtml = `
     <div class="ticket-status-row">
-      ${types.map(typ => buildTicketPill(appByType[typ], typ, g.isDeadlinePassed)).join('')}
+      ${types.map(typ => buildTicketPill(appByType[typ] && appByType[typ].length > 0 ? appByType[typ][0] : null, typ, g.isDeadlinePassed)).join('')}
     </div>`;
 
-  // 詳細エリア: 申込済みの種別 + 未申込なら申込ボタン
+  // 詳細エリア: 申込済みの種別ごとに全レコード（申込者名ごと）を列挙
   let detailHtml = '';
   types.forEach(typ => {
-    if (appByType[typ]) {
-      detailHtml += buildTicketSection(appByType[typ], typ, g.gameId, g.isDeadlinePassed);
+    if (appByType[typ] && appByType[typ].length > 0) {
+      // 申込者名ごとに複数行描画
+      appByType[typ].forEach(app => {
+        detailHtml += buildTicketSection(app, typ, g.gameId, g.isDeadlinePassed);
+      });
     }
   });
   if (!g.isDeadlinePassed) {

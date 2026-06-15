@@ -1,6 +1,7 @@
 -- migration 0003: applicant_name カラム追加 + 重複防止 UNIQUE 再設定
 -- 別レコード化: 同一 (player_id, game_id, category, applicant_name) は 1レコードまで
 -- 2026-06-15 — 龍偉承認済み（本番テストデータ全クリア前提）
+-- ⚠️ WARNING: 破壊的操作（DELETE + ADD COLUMN）含む。再実行禁止。本番適用済み。
 
 -- 0. 既存テストデータを全削除（本番データなし・龍偉承認済み）
 DELETE FROM applications;

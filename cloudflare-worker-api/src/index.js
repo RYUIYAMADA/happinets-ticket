@@ -378,7 +378,7 @@ async function handleCreateApplication(request, env, origin, nowIso, randomToken
   const appId = randomToken();
   const { appId: resolvedAppId } = await createApplication(env.DB, auth.session, payload, appId, nowIso);
   // 申込完了後、非同期でLINE push（失敗しても申込成功を妨げない）
-  // resolvedAppId = DB実在ID（UPDATE時は既存行のapp_id）を渡す
+  // resolvedAppId = INSERTされた実appId を渡す（別レコード化により毎回新規INSERT）
   sendApplicationConfirmPush(env, resolvedAppId).catch((err) => {
     console.error("confirm_push_unhandled", { appId: resolvedAppId, error: err?.message });
   });

@@ -6,6 +6,6 @@
 DROP INDEX IF EXISTS uq_applications_per_applicant;
 
 -- 新UNIQUE: cancelled 以外のみ重複禁止（cancelled は何度も INSERT 可能）
-CREATE UNIQUE INDEX uq_applications_active_per_applicant
+CREATE UNIQUE INDEX IF NOT EXISTS uq_applications_active_per_applicant
   ON applications(player_id, game_id, category, applicant_name)
   WHERE status != 'cancelled';
