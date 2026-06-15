@@ -88,17 +88,9 @@ function doGet(e) {
         const stored = PropertiesService.getScriptProperties().getProperty('ADMIN_API_TOKEN');
         if (!stored || tok !== stored) throw new Error('unauthorized');
         const task = e.parameter.task;
-        if (task === 'setRichMenuImageBase64') {
-          setRichMenuImageBase64_RUNONCE();
-          result = { ok: true, done: 'setRichMenuImageBase64' };
-        } else if (task === 'createRichMenu') {
-          createRichMenu_RUNONCE();
-          const rid = PropertiesService.getScriptProperties().getProperty('LINE_RICH_MENU_ID');
-          result = { ok: true, done: 'createRichMenu', richMenuId: rid };
-        } else if (task === 'uploadRichMenuImage') {
-          const rid2 = e.parameter.richMenuId || PropertiesService.getScriptProperties().getProperty('LINE_RICH_MENU_ID');
-          uploadRichMenuImage_RUNONCE(rid2);
-          result = { ok: true, done: 'uploadRichMenuImage' };
+        // [Deprecated] setRichMenuImageBase64, createRichMenu, uploadRichMenuImage は legacy (1200×405)
+        if (task === 'setRichMenuImageBase64' || task === 'createRichMenu' || task === 'uploadRichMenuImage') {
+          result = { ok: false, error: task + ' is deprecated. Use createRichMenuDirect instead.' };
         } else if (task === 'setupDailyTrigger') {
           setupDailyTrigger_RUNONCE();
           result = { ok: true, done: 'setupDailyTrigger' };
@@ -128,9 +120,9 @@ function doGet(e) {
             name: 'ハピネッツ家族チケット', chatBarText: 'チケットメニュー',
             areas: [
               { bounds: { x: 0, y: 0, width: 1250, height: 1686 },
-                action: { type: 'uri', uri: 'https://app-five-pi-50.vercel.app/api/serve/hnts-player-form', label: 'チケット申込' } },
+                action: { type: 'uri', uri: 'https://liff.line.me/2010388137-8fUulpy5', label: 'チケット申込' } },
               { bounds: { x: 1250, y: 0, width: 1250, height: 1686 },
-                action: { type: 'uri', uri: 'https://app-five-pi-50.vercel.app/api/serve/hnts-player-dashboard', label: '申込確認' } }
+                action: { type: 'uri', uri: 'https://liff.line.me/2010388137-gFA7Ik77', label: '申込確認' } }
             ]
           };
           const cr = UrlFetchApp.fetch('https://api.line.me/v2/bot/richmenu', {
@@ -145,18 +137,21 @@ function doGet(e) {
           PropertiesService.getScriptProperties().setProperty('LINE_RICH_MENU_ID', rid);
           // 画像アップロード
           const b64 = PropertiesService.getScriptProperties().getProperty('RICH_MENU_IMAGE_BASE64');
-          if (b64) {
-            const imgBlob = Utilities.newBlob(Utilities.base64Decode(b64), 'image/png', 'rich-menu.png');
-            UrlFetchApp.fetch('https://api-data.line.me/v2/bot/richmenu/' + rid + '/content', {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + lineToken, 'Content-Type': 'image/png' },
-              payload: imgBlob.getBytes(), muteHttpExceptions: true
-            });
-          }
+          if (!b64) { result = { ok: false, error: 'RICH_MENU_IMAGE_BASE64 not set' }; break; }
+          const imgBlob = Utilities.newBlob(Utilities.base64Decode(b64), 'image/png', 'rich-menu.png');
+          const uploadRes = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/richmenu/' + rid + '/content', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + lineToken, 'Content-Type': 'image/png' },
+            payload: imgBlob.getBytes(), muteHttpExceptions: true
+          });
+          const uploadCode = uploadRes.getResponseCode();
+          if (uploadCode !== 200) { result = { ok: false, error: 'image upload failed: ' + uploadCode }; break; }
           // デフォルト設定
-          UrlFetchApp.fetch('https://api.line.me/v2/bot/user/all/richmenu/' + rid, {
+          const defaultRes = UrlFetchApp.fetch('https://api.line.me/v2/bot/user/all/richmenu/' + rid, {
             method: 'POST', headers: { 'Authorization': 'Bearer ' + lineToken }, muteHttpExceptions: true
           });
+          const defaultCode = defaultRes.getResponseCode();
+          if (defaultCode !== 200) { result = { ok: false, error: 'default menu set failed: ' + defaultCode }; break; }
           result = { ok: true, done: 'createRichMenuDirect', richMenuId: rid };
         } else {
           result = { ok: false, error: 'unknown task: ' + task };
