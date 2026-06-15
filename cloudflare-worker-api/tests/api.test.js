@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { mapApplicationRow, mapGameRow, normalizePlayerNo } from "../src/domain.js";
 import { createApp } from "../src/index.js";
+import { createTestDatabase } from "./test-db.js";
 
 function createDbMock(config = {}) {
   const batchCalls = [];
@@ -185,8 +186,27 @@ test("GET /api/admin/applications requires ticket admin role", async () => {
 });
 
 test("partial UNIQUE: active レコード存在時の同一申込者は 409 DUPLICATE", async () => {
-  // 既存 active (pending/confirmed/rejected) レコードが存在する場合は 409 を返す
-  // partial UNIQUE（WHERE status != 'cancelled'）が機能していることを検証
+  // 実 SQLite で partial UNIQUE（WHERE status != 'cancelled'）が機能していることを検証
+  // active (pending) レコード存在 → 同一キーで申込 → 409 DUPLICATE であることを確認
+  const db = createTestDatabase();
+
+  // テスト用プレイヤーと試合を INSERT
+  const playerRes = await db.prepare("INSERT INTO players (player_no, name) VALUES (?, ?)").bind("6", "#6").run();
+  const gameRes = await db.prepare("INSERT INTO games (game_no, date, opponent, day_of_week, deadline) VALUES (?, ?, ?, ?, ?)").bind("G01", "2026-10-01", "Away", "土", "2026-10-01").run();
+
+  const playerId = playerRes.meta.last_row_id;
+  const gameId = gameRes.meta.last_row_id;
+
+  // session token を作成
+  const sessionToken = "test-player-token";
+  await db.prepare("INSERT INTO sessions (token, player_id, expires_at) VALUES (?, ?, ?)")
+    .bind(sessionToken, playerId, "2026-06-13T06:00:00.000Z").run();
+
+  // 既存の active (pending) レコードを INSERT（applicant_name 明示）
+  await db.prepare(
+    "INSERT INTO applications (app_id, player_id, game_id, category, applicant_name, quantity_adult, receivers, pickup_method, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind("APP-EXISTING", playerId, gameId, "family", "田中", 1, '[{"name":"田中"}]', "pre", "pending", "2026-06-12T00:00:00.000Z").run();
+
   const app = createApp({
     now: () => "2026-06-13T00:00:00.000Z",
     randomToken: () => "APP-DUP-ACTIVE",
@@ -194,7 +214,7 @@ test("partial UNIQUE: active レコード存在時の同一申込者は 409 DUPL
 
   const request = new Request("https://example.com/api/applications", {
     method: "POST",
-    headers: { Authorization: "Bearer player-token", "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       gameId: "G01",
       category: "family",
@@ -205,25 +225,13 @@ test("partial UNIQUE: active レコード存在時の同一申込者は 409 DUPL
     }),
   });
 
-  // DB には既に同一キー(player=6, game=G01, category=family, applicant=田中)の active レコードが存在
-  const mock = createDbMock({
-    first(sql) {
-      if (sql.includes("INNER JOIN players")) {
-        return { token: "player-token", player_id: 6, expires_at: "2026-06-13T06:00:00.000Z", player_no: "6", name: "#6" };
-      }
-      if (sql.includes("FROM games")) {
-        return { id: 1, game_no: "G01", deadline: "2026-10-01" };
-      }
-      return null;
-    },
-    batch() {
-      // UNIQUE (status != 'cancelled') 制約違反: active レコード(pending)が存在
-      throw new Error("UNIQUE constraint failed: uq_applications_active_per_applicant");
-    },
-  });
-
-  const env = { DB: mock.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
+  const env = { DB: db, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
   const response = await app.fetch(request, env, {});
+
+  if (response.status !== 409) {
+    const text = await response.text();
+    console.error("active test error", { status: response.status, body: text });
+  }
 
   assert.equal(response.status, 409, "active レコード存在時は 409 DUPLICATE");
   const json = await response.json();
@@ -231,8 +239,27 @@ test("partial UNIQUE: active レコード存在時の同一申込者は 409 DUPL
 });
 
 test("partial UNIQUE: cancelled のみ存在時の同一申込者は 201 で新レコード", async () => {
-  // 既存 cancelled レコードのみが存在する場合は 201 で新レコード INSERT
-  // partial UNIQUE（WHERE status != 'cancelled'）が cancelled を無視していることを検証
+  // 実 SQLite で partial UNIQUE が cancelled を無視していることを検証
+  // cancelled レコードのみ存在 → 同一キーで申込 → 201 で新 INSERT されることを確認
+  const db = createTestDatabase();
+
+  // テスト用プレイヤーと試合をINSERT
+  const playerRes = await db.prepare("INSERT INTO players (player_no, name) VALUES (?, ?)").bind("6", "#6").run();
+  const gameRes = await db.prepare("INSERT INTO games (game_no, date, opponent, day_of_week, deadline) VALUES (?, ?, ?, ?, ?)").bind("G01", "2026-10-01", "Away", "土", "2026-10-01").run();
+
+  const playerId = playerRes.meta.last_row_id;
+  const gameId = gameRes.meta.last_row_id;
+
+  // session token を作成
+  const sessionToken = "test-player-token-2";
+  await db.prepare("INSERT INTO sessions (token, player_id, expires_at) VALUES (?, ?, ?)")
+    .bind(sessionToken, playerId, "2026-06-13T06:00:00.000Z").run();
+
+  // 既存の cancelled レコードをINSERT（同一キー、applicant_name 明示）
+  await db.prepare(
+    "INSERT INTO applications (app_id, player_id, game_id, category, applicant_name, quantity_adult, receivers, pickup_method, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind("APP-CANCELLED", playerId, gameId, "family", "田中", 1, '[{"name":"田中"}]', "pre", "cancelled", "2026-06-12T00:00:00.000Z").run();
+
   const app = createApp({
     now: () => "2026-06-13T00:00:00.000Z",
     randomToken: () => "APP-REAPPLY-AFTER-CANCEL",
@@ -240,36 +267,18 @@ test("partial UNIQUE: cancelled のみ存在時の同一申込者は 201 で新�
 
   const request = new Request("https://example.com/api/applications", {
     method: "POST",
-    headers: { Authorization: "Bearer player-token", "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       gameId: "G01",
       category: "family",
       quantityAdult: 3,
-      receiverName: "田中",  // 前回キャンセルした同一申込者名
+      receiverName: "田中",
       pickupMethod: "pre",
       parkingCount: 0,
     }),
   });
 
-  // DB には同一キーの cancelled レコードのみ存在。active なレコードはない
-  // createApplication は INSERT に成功する（UNIQUE チェック対象外）
-  const mock = createDbMock({
-    first(sql) {
-      if (sql.includes("INNER JOIN players")) {
-        return { token: "player-token", player_id: 6, expires_at: "2026-06-13T06:00:00.000Z", player_no: "6", name: "#6" };
-      }
-      if (sql.includes("FROM games")) {
-        return { id: 1, game_no: "G01", deadline: "2026-10-01" };
-      }
-      return null;
-    },
-    batch() {
-      // cancelled レコードは UNIQUE に含まれないため INSERT 成功
-      return [{ meta: { changes: 1 } }, {}];
-    },
-  });
-
-  const env = { DB: mock.DB, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
+  const env = { DB: db, ALLOWED_ORIGIN: "http://127.0.0.1:8787" };
   const response = await app.fetch(request, env, {});
 
   assert.equal(response.status, 201, "cancelled のみ存在時は 201 で新レコード INSERT");
@@ -587,24 +596,39 @@ test("POST /api/applications returns 201 and writes in batch", async () => {
   assert.equal(mock.batchCalls.length, 1);
 });
 
-test("POST /api/applications calls sendApplicationConfirmPush with resolved app ID", async () => {
-  // handleCreateApplication が push に渡すよ app_id が、実際に DB に INSERT された app_id と一致することを検証
-  // fire-and-forget でも呼び出し引数の検証は可能（env の関数をモックするのではなく、fetch の ctx で差し替え）
-  let capturedPushAppId = null;
-  const mockSendPush = async (env, appId) => {
-    capturedPushAppId = appId;
+test("POST /api/applications calls sendConfirmPush with correct app ID via DI injection", async () => {
+  // DI を通じて注入された sendConfirmPush が実際に呼び出され、
+  // かつ正しい app ID（実際に DB に INSERT された ID）が渡されることを検証
+  const db = createTestDatabase();
+
+  // テスト用プレイヤーと試合を INSERT
+  const sessionToken = "test-player-token-3";
+  const playerRes = await db.prepare("INSERT INTO players (player_no, name) VALUES (?, ?)").bind("6", "#6").run();
+  const gameRes = await db.prepare("INSERT INTO games (game_no, date, opponent, day_of_week, deadline) VALUES (?, ?, ?, ?, ?)").bind("G01", "2026-10-01", "Away", "土", "2026-10-01").run();
+
+  const playerId = playerRes.meta.last_row_id;
+
+  // session token を作成
+  await db.prepare("INSERT INTO sessions (token, player_id, expires_at) VALUES (?, ?, ?)")
+    .bind(sessionToken, playerId, "2026-06-13T06:00:00.000Z").run();
+
+  // Spy を準備：渡された app ID をキャプチャ
+  let capturedAppId = null;
+  const sendConfirmPushSpy = async (env, appId) => {
+    capturedAppId = appId;
     return { pushed: true };
   };
 
   const app = createApp({
     now: () => "2026-06-13T00:00:00.000Z",
     randomToken: () => "APP-PUSH-TEST",
+    sendConfirmPush: sendConfirmPushSpy,  // DI: 注入された spy 関数
   });
 
   const request = new Request("https://example.com/api/applications", {
     method: "POST",
     headers: {
-      Authorization: "Bearer player-token",
+      Authorization: `Bearer ${sessionToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -617,32 +641,22 @@ test("POST /api/applications calls sendApplicationConfirmPush with resolved app 
     }),
   });
 
-  const mock = createDbMock({
-    first(sql) {
-      if (sql.includes("INNER JOIN players")) {
-        return { token: "player-token", player_id: 6, expires_at: "2026-06-13T06:00:00.000Z", player_no: "6", name: "#6" };
-      }
-      if (sql.includes("FROM games")) {
-        return { id: 1, game_no: "G01", deadline: "2026-10-01" };
-      }
-      return null;
-    },
-  });
-
   const env = {
-    DB: mock.DB,
+    DB: db,
     ALLOWED_ORIGIN: "http://127.0.0.1:8787",
-    // push call をインターセプト（通常は非同期 fire-and-forget）
-    _mockSendApplicationConfirmPush: mockSendPush,
   };
 
-  // モックの push 呼び出しをインターセプト（実装では sendApplicationConfirmPush を直接 await しないため、
-  // 代わりに handleCreateApplication の返却値 applicationId が INSERT された ID と一致するかテスト）
   const response = await app.fetch(request, env, {});
   const json = await response.json();
 
-  assert.equal(response.status, 201);
-  assert.equal(json.data.applicationId, "APP-PUSH-TEST", "返却 applicationId が createApplication が返した実ID と一致");
+  assert.equal(response.status, 201, "201 で申込成功");
+  const responseAppId = json.data.applicationId;
+  assert.ok(responseAppId, "applicationId がレスポンスに含まれる");
+
+  // 小さな遅延を挟む（fire-and-forget の非同期実行完了を待つ）
+  await new Promise(r => setTimeout(r, 100));
+
+  assert.equal(capturedAppId, responseAppId, "push spy に渡された app ID = レスポンスの app ID（実INSERT ID）");
 });
 
 test("PUT /api/applications/:app_id/cancel returns 404 for missing app", async () => {

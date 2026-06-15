@@ -44,6 +44,7 @@ export function createApp(options = {}) {
   const now = options.now || (() => new Date().toISOString());
   const randomToken = options.randomToken || (() => crypto.randomUUID());
   const checkAdminPassword = options.verifyAdminPassword || verifyAdminPassword;
+  const sendConfirmPush = options.sendConfirmPush || sendApplicationConfirmPush;
 
   return {
     async fetch(request, env) {
@@ -83,7 +84,7 @@ export function createApp(options = {}) {
           return await handleListGames(url, env, origin, nowIso);
         }
         if (request.method === "POST" && url.pathname === "/api/applications") {
-          return await handleCreateApplication(request, env, origin, nowIso, randomToken);
+          return await handleCreateApplication(request, env, origin, nowIso, randomToken, sendConfirmPush);
         }
         if (request.method === "GET" && url.pathname === "/api/applications") {
           return await handleListOwnApplications(request, url, env, origin, nowIso);
@@ -370,7 +371,7 @@ async function handleListGames(url, env, origin, nowIso) {
   return ok(games, origin);
 }
 
-async function handleCreateApplication(request, env, origin, nowIso, randomToken) {
+async function handleCreateApplication(request, env, origin, nowIso, randomToken, sendConfirmPush) {
   const auth = await requirePlayerSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
   const body = await readJson(request);
@@ -379,7 +380,7 @@ async function handleCreateApplication(request, env, origin, nowIso, randomToken
   const { appId: resolvedAppId } = await createApplication(env.DB, auth.session, payload, appId, nowIso);
   // 申込完了後、非同期でLINE push（失敗しても申込成功を妨げない）
   // resolvedAppId = INSERTされた実appId を渡す（別レコード化により毎回新規INSERT）
-  sendApplicationConfirmPush(env, resolvedAppId).catch((err) => {
+  sendConfirmPush(env, resolvedAppId).catch((err) => {
     console.error("confirm_push_unhandled", { appId: resolvedAppId, error: err?.message });
   });
   return ok({ applicationId: resolvedAppId }, origin, 201);
