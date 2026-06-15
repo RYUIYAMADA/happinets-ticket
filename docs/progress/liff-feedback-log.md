@@ -60,8 +60,27 @@ status: in_progress（龍偉実機テスト中）
 - 同じ申込者名で再送 → 409 DUPLICATE 確認
 - 別申込者名(鈴木) → 201 確認
 
+### UI表示・partial UNIQUE完成（2026-06-15 最終版・本番反映済み）
+- player-dashboard.html: 申込者名(applicantName)を詳細表示に追加（i18n: ja/en対応）
+- admin.html: テーブル列「受取者」→「申込者名」に変更・モバイル詳細にも追加
+- migration 0004: UNIQUE を partial index に変更（WHERE status != 'cancelled'）
+  - cancelled レコードは UNIQUE 対象外 → 同一申込者が cancel 後に**再申込可能**に（A10解消）
+
+### 最終検証結果（本番データ・2026-06-15）
+- cancel→同名再申込: 201 PASS（花子: cancelled レコード→pending 別レコード）
+- admin API: applicantName 6件全て返却確認（田中・太田・山田・鈴木・花子×2）
+- **ダッシュボード/admin 表示: applicantName が行/カードごとに別表示される（✅ 龍偉最重要要件達成）**
+- テスト: 48 pass（partial UNIQUE テスト追加）
+
+### 確認済みバグ対応状況（全て実装済み）
+- A4(CSV インジェクション): csvEscape に =/+/-/@ 対策（先頭チェック・シングルクォート前置）
+- A6(認可漏れ): handleAdminApplications / handleAdminExport に requireTicketAdmin 追加
+- A9(child/infant欠落): categoryTotals を adult+child+infant 合算に修正
+- B1(row-closed/row-disabled): CSS クラス統一
+- B2(cancelled除外): listApplicationsByPlayer で WHERE status != 'cancelled'
+- B3(confirm日本語): tf('cancelConfirm') に置換
+
 ## 残・注意
-- player-dashboard.html / admin.html に applicantName 列の表示追加（未対応）
 - 龍偉の実機最終確認中（マイ申込状況が開くか・予約→申込→確認の通し）
 - 任意: line-harness(an-line 2本)/masters-regatta-line(2本・ボート終了・孤児) のcron整理。Cloudflare無料プランcron上限5本(an-line2+masters2+family1)。18時配信は実現済みなので整理は不要
 
