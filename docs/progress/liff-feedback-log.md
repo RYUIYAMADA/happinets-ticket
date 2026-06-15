@@ -27,7 +27,41 @@ status: in_progress（龍偉実機テスト中）
 - リッチメニュー復旧(size不一致を修正)
 - C1高バグ修正: createRichMenuDirect size/areas 843→1686（画像 2500×1686 に整合）。createRichMenu_RUNONCE に「未使用legacy」コメント追記。2026-06-15
 
+## 2026-06-15 別レコード化 + バグ修正（完了・本番反映済み）
+
+### 設計変更: 申込者名ごとに別レコード化
+- 加算UPDATE廃止。同一(player_id, game_id, category, applicant_name)はUNIQUE → 409 DUPLICATE
+- applicant_name = receiverName（受取人名を申込者名として兼用）
+- 申込者名が違えば同試合・同種別に複数申込可能（田中2枚・太田5枚 = 2レコード）
+- push 通知の app_id は createApplication が返す実IDを使用（A1解消）
+- status 巻き戻しバグ解消（加算UPDATEがなくなったのでA2解消）
+
+### スキーマ変更（migration 0003）
+- `applications.applicant_name TEXT NOT NULL DEFAULT ''` を追加
+- `CREATE UNIQUE INDEX uq_applications_per_applicant ON applications(player_id, game_id, category, applicant_name)`
+- 旧テストデータ全削除（4レコード・全cancelled/pending・本番データなし確認済み）
+
+### テストデータ（本番D1に投入済み）
+- DEMO-TANAKA-001: 選手006, G02(vs宇都宮10/15), family, 申込者=田中, 大人2枚, pending
+- DEMO-OHTA-002:   選手006, G02(vs宇都宮10/15), family, 申込者=太田, 大人5枚, pending
+
+### 並行バグ修正
+- A4: csvEscape に CSV インジェクション対策（=/+/-/@ 先頭にシングルクォート前置）
+- A6: handleAdminApplications / handleAdminExport に requireTicketAdmin 追加
+- A9: categoryTotals を adult+child+infant 合算に修正（child/infant 欠落バグ解消）
+- B1: player-form.html の row-closed → row-disabled に統一
+- B2: listApplicationsByPlayer で status != 'cancelled' 除外
+- B3: confirm('この申込をキャンセルしますか？') → tf('cancelConfirm') に置換
+- テスト: 45 → 47 pass（+2新規: 重複409, A6認可テスト）
+
+### 本番検証結果
+- admin GET /api/admin/applications?gameId=G02 → applicantName 付き2レコード返却確認
+- POST /api/applications (山田) → 201 + applicationId 返却確認
+- 同じ申込者名で再送 → 409 DUPLICATE 確認
+- 別申込者名(鈴木) → 201 確認
+
 ## 残・注意
+- player-dashboard.html / admin.html に applicantName 列の表示追加（未対応）
 - 龍偉の実機最終確認中（マイ申込状況が開くか・予約→申込→確認の通し）
 - 任意: line-harness(an-line 2本)/masters-regatta-line(2本・ボート終了・孤児) のcron整理。Cloudflare無料プランcron上限5本(an-line2+masters2+family1)。18時配信は実現済みなので整理は不要
 
