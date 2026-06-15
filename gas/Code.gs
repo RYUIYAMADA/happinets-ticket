@@ -124,12 +124,12 @@ function doGet(e) {
           const lineToken = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
           if (!lineToken) { result = { ok: false, error: 'LINE_CHANNEL_ACCESS_TOKEN not set' }; break; }
           const menuBody = {
-            size: { width: 2500, height: 843 }, selected: true,
+            size: { width: 2500, height: 1686 }, selected: true,
             name: 'ハピネッツ家族チケット', chatBarText: 'チケットメニュー',
             areas: [
-              { bounds: { x: 0, y: 0, width: 1250, height: 843 },
+              { bounds: { x: 0, y: 0, width: 1250, height: 1686 },
                 action: { type: 'uri', uri: 'https://app-five-pi-50.vercel.app/api/serve/hnts-player-form', label: 'チケット申込' } },
-              { bounds: { x: 1250, y: 0, width: 1250, height: 843 },
+              { bounds: { x: 1250, y: 0, width: 1250, height: 1686 },
                 action: { type: 'uri', uri: 'https://app-five-pi-50.vercel.app/api/serve/hnts-player-dashboard', label: '申込確認' } }
             ]
           };
@@ -1257,6 +1257,7 @@ function setupProperties_RUNONCE() {
 // =====================================================
 // LINE リッチメニュー管理
 // =====================================================
+// [未使用legacy] 旧サイズ 1200×405 のリッチメニュー作成関数。現行は createRichMenuDirect (2500×1686) を使用。
 function createRichMenu_RUNONCE() {
   var token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
   if (!token) {

@@ -1,7 +1,7 @@
 ---
 task: "family-tickets LIFF版 本番テスト・龍偉フィードバック対応ログ"
 project: "family-tickets"
-last_updated: "2026-06-14"
+last_updated: "2026-06-15"
 status: in_progress（龍偉実機テスト中）
 ---
 
@@ -12,7 +12,7 @@ status: in_progress（龍偉実機テスト中）
 - D1: `family-tickets-db` id=`e0012711-4846-4727-8bc9-2a44d3d66de6`（APAC/KIX）
 - LINEログインチャネルID(LIFF用): `2010388137` / Messaging APIチャネル: `2010382769`（.env.gasのCHANNEL_ACCESS_TOKENはこちら）
 - LIFF ID: 申込フォーム=`2010388137-8fUulpy5` / マイ申込状況=`2010388137-gFA7Ik77`（★4文字目は大文字 I。小文字 l は誤り＝過去に誤読してnot found多発）
-- リッチメニュー: 現行 `richmenu-336dca64551d65ce4fd481c437d79ac5`（2ボタン・size 2500×843・画像 assets/richmenu.png 2500×1686・デフォルト設定済）。左=予約する(8fUulpy5)/右=マイ申込状況(gFA7Ik77)。スリム化（sublabel+tap-hintを削除・ラベル130px→180px）2026-06-14
+- リッチメニュー: 現行 `richmenu-336dca64551d65ce4fd481c437d79ac5`（2ボタン・size 2500×843・画像 assets/richmenu.png 2500×1686・デフォルト設定済）。左=予約する(8fUulpy5)/右=マイ申込状況(gFA7Ik77)。スリム化（sublabel+tap-hintを削除・ラベル130px→180px）2026-06-14。★C1高バグ: createRichMenuDirect の size/areas が 843 だったため画像下半分が表示/タップ不能だった → Code.gs を 1686 に修正済（2026-06-15）。次回 createRichMenuDirect 実行で新メニューに置き換え必須（旧 ID `richmenu-336dca64551d65ce4fd481c437d79ac5` を削除してから再作成推奨）
 - html-share slug: hnts-index / hnts-player-form / hnts-player-dashboard / hnts-admin。★バー無し実体URL=`/api/serve/<slug>`（no-store化済み・即反映）。/p/<slug>はツールバー付き
 - テスト用: 選手番号 006/14/22/99/101・admin password `happinets-test`
 
@@ -25,6 +25,7 @@ status: in_progress（龍偉実機テスト中）
 - 英語モード: JA/enトグルで選択言語のみ表示(併記廃止・8689369)。※LINEアナウンスのみ日英全文併記
 - admin: タブ折返し・テーブルSP・KPI/LINE通知のサイレント失敗(baseURL空が原因)修正
 - リッチメニュー復旧(size不一致を修正)
+- C1高バグ修正: createRichMenuDirect size/areas 843→1686（画像 2500×1686 に整合）。createRichMenu_RUNONCE に「未使用legacy」コメント追記。2026-06-15
 
 ## 残・注意
 - 龍偉の実機最終確認中（マイ申込状況が開くか・予約→申込→確認の通し）
