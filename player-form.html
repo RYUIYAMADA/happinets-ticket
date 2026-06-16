@@ -217,6 +217,10 @@
     border-color: var(--primary);
     box-shadow: var(--shadow-focus);
   }
+  select.error, input.error, textarea.error {
+    border-color: var(--error);
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.16);
+  }
   button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
@@ -1327,6 +1331,7 @@ window.LIFF_CONFIG = {
 </div>
 
 <script src="./api-config.js"></script>
+<script src="./liff-auth.js"></script>
 <script>
 (function () {
   const DEFAULT_PRODUCTION_BASE_URL = "https://family-tickets-api.row2014-2015-k.workers.dev";
@@ -1612,129 +1617,7 @@ window.LIFF_CONFIG = {
 })();
 
 </script>
-<!-- liff-auth: LIFF認証共通処理 -->
-<script>
-(function () {
-  let liffInitialized = false;
-  let cachedLiffId = null;
-
-  async function ensureLiffInitialized(liffId) {
-    if (liffInitialized && cachedLiffId === liffId) {
-      return;
-    }
-    if (!liffId || liffId.includes("XXXXXXXXXXXX")) {
-      throw new Error(t('unsetLiffId'));
-    }
-    if (typeof liff === "undefined") {
-      throw new Error(t('liffSdkError'));
-    }
-    try {
-      await liff.init({ liffId, withLoginOnExternalBrowser: true });
-    } catch (e) {
-      throw e;
-    }
-
-    // 【重要】ログイン状態を確認・ログイン処理
-    const isLoggedIn = liff.isLoggedIn();
-    if (!isLoggedIn) {
-      try {
-        await liff.login();
-      } catch (e) {
-        throw e;
-      }
-    } else {
-    }
-
-    liffInitialized = true;
-    cachedLiffId = liffId;
-  }
-
-  async function initAndAuthWithLiff(liffId) {
-    try {
-      // 【重要】init + login 完了待ち
-      await ensureLiffInitialized(liffId);
-
-      // この時点で確実にログイン済み
-      const idToken = liff.getIDToken();
-      const tokenDisplay = idToken
-        ? idToken.substring(0, 10) + '...' + idToken.substring(Math.max(0, idToken.length - 10)) + ' (長さ:' + idToken.length + ')'
-        : 'null (IDトークン未取得)';
-      if (!idToken) {
-        // openid scope 未同意 or scope 未設定の可能性
-        throw new Error(t('mustBeInLineApp'));
-      }
-
-      // sessionStorage にキャッシュがあれば返す
-      const storedToken = sessionStorage.getItem("sessionToken");
-      if (storedToken) {
-        const storedAuth = JSON.parse(sessionStorage.getItem("auth") || "null");
-        if (storedAuth && storedAuth.role === "player") {
-          return storedAuth;
-        }
-      }
-
-      // Worker API で IDToken を検証 → セッション発行
-      const result = await workerApiClient.loginWithLiff(idToken);
-
-      if (result.ok) {
-        const authData = { ...result.data, role: "player" };
-        sessionStorage.setItem("auth", JSON.stringify(authData));
-        sessionStorage.setItem("sessionToken", result.data.token);
-        return authData;
-      }
-
-      if (result.error && result.error.code === "UNLINKED") {
-        return { unlinked: true };
-      }
-
-      const errMsg = result.error?.message || t('submitError');
-      throw new Error(errMsg);
-    } catch (e) {
-      throw e;
-    }
-  }
-
-  async function linkWithPlayerNo(playerId) {
-    try {
-      if (typeof liff === "undefined") throw new Error(t('liffSdkError'));
-
-      // 【重要】init + login 完了待ち
-      const liffId = (window.LIFF_CONFIG || {}).formLiffId || '';
-      await ensureLiffInitialized(liffId);
-
-      // この時点で確実にログイン済み
-      const idToken = liff.getIDToken();
-      const tokenDisplay = idToken
-        ? idToken.substring(0, 10) + '...' + idToken.substring(Math.max(0, idToken.length - 10)) + ' (長さ:' + idToken.length + ')'
-        : 'null (IDトークン未取得)';
-      if (!idToken) {
-        throw new Error(t('mustBeInLineApp'));
-      }
-
-      // Worker API で IDToken + 背番号を送信 → 初回連携
-      const result = await workerApiClient.linkLiff(idToken, playerId);
-
-      if (result.ok) {
-        const authData = { ...result.data, role: "player" };
-        sessionStorage.setItem("auth", JSON.stringify(authData));
-        sessionStorage.setItem("sessionToken", result.data.token);
-        return authData;
-      }
-
-      if (result.error && result.error.code === "UNAUTHORIZED") {
-        const msg = t('errorUnlinked');
-        throw new Error(msg);
-      }
-
-      const errMsg = result.error?.message || t('errorLinkFailed');
-      throw new Error(errMsg);
-    } catch (e) {
-      throw e;
-    }
-  }
-  window.liffAuth = { initAndAuthWithLiff, linkWithPlayerNo };
-})();
-</script>
+<!-- liff-auth.js で LIFF 認証を実装 -->
 <script>
 // ─── i18n ───────────────────────────────────────────
 const STRINGS = { ja: {}, en: {} };
@@ -2067,6 +1950,7 @@ function esc(s) {
 
 let games = [];
 let auth = null;
+let isSubmitting = false;
 
 /** LIFF認証完了後にフォームを初期化する */
 async function initFormAfterAuth(authData) {
@@ -2079,7 +1963,12 @@ async function initFormAfterAuth(authData) {
   // 「接続し直す」ボタン表示（フォールバック番号ログイン時のみ）
   const reloginBtn = document.getElementById('relogin-btn');
   if (reloginBtn) {
-    reloginBtn.style.display = 'inline-block';
+    // authData に fromFallback フラグがあればボタンを表示
+    if (authData?.fromFallback === true) {
+      reloginBtn.style.display = 'inline-block';
+    } else {
+      reloginBtn.style.display = 'none';
+    }
   }
 
   // コンテナ表示
@@ -2177,7 +2066,7 @@ async function handleFallbackLogin() {
     if (!result.ok) {
       throw new Error(result.error?.message || result.error || t('errorUnlinked'));
     }
-    const authData = { ...result.data, role: 'player' };
+    const authData = { ...result.data, role: 'player', fromFallback: true };
     sessionStorage.setItem('auth', JSON.stringify(authData));
     sessionStorage.setItem('sessionToken', result.data.token);
     document.getElementById('fallback-login-overlay').style.display = 'none';
@@ -2189,18 +2078,13 @@ async function handleFallbackLogin() {
   }
 }
 
-/** 戻るボタン: LIFF内なら closeWindow、外なら index.html へ */
+/** 戻るボタン: 種別選択行へスクロール */
 function handleBackButton() {
-  // ページ内ナビのみ: STEP2からSTEP1に戻る
-  // 種別選択をすべてクリア（最初の状態に戻す）
-  const inputs = document.querySelectorAll('input[name="ticketType"]');
-  inputs.forEach(input => { input.checked = false; });
-
-  // 種別選択時のイベント発火
-  onTypeChange();
-
-  // スクロールを先頭に
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  // 種別選択行へスクロール（入力を保持したままSTEP1へ戻す）
+  const topShell = document.querySelector('.top-shell');
+  if (topShell) {
+    topShell.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 /** セッション クリアして再ログイン */
@@ -2297,8 +2181,13 @@ async function loadGames() {
   // ①締切前 = 通常申込可
   // ②申込締切後〜試合日翌日12:00JST = 「申し込み終了」表示（位置固定）
   // ③試合日翌日12:00JST以降 = 一覧から完全除外
-  const nowJst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-  games = (result.data || []).filter(g => {
+  // serverNow（サーバー時刻 ISO）があれば使い、端末時計ズレを回避する
+  const gamesArray = Array.isArray(result.data) ? result.data : (result.data?.games || []);
+  const serverNow = result.data?.serverNow || null;
+  const nowJst = serverNow
+    ? new Date(new Date(serverNow).toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
+    : new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  games = gamesArray.filter(g => {
     if (!g.date) return true;
     const gameDate = new Date(g.date);
     // 試合日翌日の12:00 JST = (試合日+1日) の 12:00 JST
@@ -2458,6 +2347,17 @@ function buildInviteGrid() {
     return;
   }
 
+  // 再描画前に入力値を保存
+  const savedData = {};
+  list.querySelectorAll('.game-card-row').forEach(row => {
+    const gameId = row.dataset.game;
+    const qty = row.querySelector('.stepper-val')?.textContent || '0';
+    const pickup = row.querySelector('.inv-pickup')?.value || 'day';
+    const receiver = document.getElementById('rec-inv-' + gameId)?.value || '';
+    const note = document.getElementById('note-inv-' + gameId)?.value || '';
+    savedData[gameId] = { qty, pickup, receiver, note };
+  });
+
   const displayCount = Math.min(inviteExpandState.visible, visible.length);
   const hasMore = displayCount < visible.length;
 
@@ -2478,7 +2378,13 @@ function buildInviteGrid() {
       : '';
     const sid = 'inv-' + g.gameId;
     const invExisting = getExistingQty(g.gameId, 'invite');
+    const invExistingHTML = invExisting > 0
+      ? `<div class="notice notice-warning" style="margin-bottom: var(--space-3);">
+          <small style="font-weight: 500;">${lang === 'ja' ? '受取人名を変えて送信すると別の申込として追加されます' : 'If you change the receiver name and submit, it will be added as a separate application'}</small>
+        </div>`
+      : '';
     return `<div class="game-card-row" data-game="${esc(g.gameId)}">
+      ${invExistingHTML}
       <div class="game-card-top">
         <div class="game-card-info">
           <div class="game-date">${esc(formatGameDate(g.date))}（${esc(formatDayOfWeek(g.dayOfWeek))}）</div>
@@ -2521,6 +2427,18 @@ function buildInviteGrid() {
   }
 
   list.innerHTML = html;
+
+  // 再描画後に保存済み値を復元
+  Object.entries(savedData).forEach(([gameId, data]) => {
+    const qtyEl = document.getElementById('val-inv-' + gameId);
+    if (qtyEl) qtyEl.textContent = data.qty;
+    const pickupEl = document.querySelector('.inv-pickup[data-game="' + gameId + '"]');
+    if (pickupEl) pickupEl.value = data.pickup;
+    const receiverEl = document.getElementById('rec-inv-' + gameId);
+    if (receiverEl) receiverEl.value = data.receiver;
+    const noteEl = document.getElementById('note-inv-' + gameId);
+    if (noteEl) noteEl.value = data.note;
+  });
 }
 
 function expandInviteGames() {
@@ -2538,6 +2456,18 @@ function buildFamilyGrid() {
     list.innerHTML = `<p class="empty-state">${esc(t('emptyStateInvite'))}</p>`;
     return;
   }
+
+  // 再描画前に入力値を保存
+  const savedData = {};
+  list.querySelectorAll('.game-card-row').forEach(row => {
+    const gameId = row.dataset.game;
+    const qty = row.querySelector('.stepper-val')?.textContent || '0';
+    const pickup = row.querySelector('.fam-pickup')?.value || 'day';
+    const parking = row.querySelector('.fam-parking')?.value || '0';
+    const receiver = document.getElementById('rec-fam-' + gameId)?.value || '';
+    const note = document.getElementById('note-fam-' + gameId)?.value || '';
+    savedData[gameId] = { qty, pickup, parking, receiver, note };
+  });
 
   const displayCount = Math.min(familyExpandState.visible, visible.length);
   const hasMore = displayCount < visible.length;
@@ -2610,6 +2540,20 @@ function buildFamilyGrid() {
   }
 
   list.innerHTML = html;
+
+  // 再描画後に保存済み値を復元
+  Object.entries(savedData).forEach(([gameId, data]) => {
+    const qtyEl = document.getElementById('val-fam-' + gameId);
+    if (qtyEl) qtyEl.textContent = data.qty;
+    const pickupEl = document.querySelector('.fam-pickup[data-game="' + gameId + '"]');
+    if (pickupEl) pickupEl.value = data.pickup;
+    const parkingEl = document.querySelector('.fam-parking[data-game="' + gameId + '"]');
+    if (parkingEl) parkingEl.value = data.parking;
+    const receiverEl = document.getElementById('rec-fam-' + gameId);
+    if (receiverEl) receiverEl.value = data.receiver;
+    const noteEl = document.getElementById('note-fam-' + gameId);
+    if (noteEl) noteEl.value = data.note;
+  });
 }
 
 function expandFamilyGames() {
@@ -2665,6 +2609,8 @@ document.addEventListener('change', e => { if (e.target.id === 'paid-game') onPa
 
 // ===== 招待チケット送信 =====
 async function submitInvite() {
+  if (isSubmitting) return;
+  isSubmitting = true;
   clearAlert();
 
   const entries = [];
@@ -2679,9 +2625,19 @@ async function submitInvite() {
     entries.push({ gameId, quantityAdult: qty, pickupMethod, receiverName: receiver, note });
   });
 
-  if (entries.length === 0) { showAlert(t('selectOneGame'), 'error'); return; }
+  if (entries.length === 0) { showAlert(t('selectOneGame'), 'error'); isSubmitting = false; return; }
   const missingReceiver = entries.find(e => !e.receiverName);
-  if (missingReceiver) { showAlert(tf('missingReceiverLabel', { game: getGameLabel(missingReceiver.gameId) }), 'error'); return; }
+  if (missingReceiver) {
+    const gameId = missingReceiver.gameId;
+    const field = document.getElementById('rec-inv-' + gameId);
+    if (field) {
+      field.classList.add('error');
+      field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    showAlert(tf('missingReceiverLabel', { game: getGameLabel(gameId) }), 'error');
+    isSubmitting = false;
+    return;
+  }
   // 追加申込を許可: 既存申込があっても送信可（Workerが枚数を加算して更新する）
 
   const btn = document.getElementById('inv-submit');
@@ -2715,19 +2671,34 @@ async function submitInvite() {
     }
   }
 
+  if (success > 0) {
+    const fullMsg = errors.length > 0 && success < entries.length
+      ? tf('applicationComplete', { count: success, errors: errors.length ? ` ${lang === 'ja' ? '失敗' : 'Failed'}: ${errors.join(', ')}` : '' }) + `\n\n${lang === 'ja' ? '入力内容は保持されています。もう一度送信してください。' : 'Your input is preserved. Please try submitting again.'}`
+      : tf('applicationComplete', { count: success, errors: errors.length ? ` ${lang === 'ja' ? '失敗' : 'Failed'}: ${errors.join(', ')}` : '' });
+    showAlert(fullMsg, errors.length === 0 ? 'success' : 'error');
+    if (errors.length === 0) {
+      btn.disabled = true;
+      btn.innerHTML = esc(t('submitBtn'));
+      document.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+      history.replaceState(null, '', 'player-dashboard.html');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      location.href = 'https://liff.line.me/2010388137-gFA7Ik77';
+      return;
+    }
+  } else {
+    const errMsg = tf('applicationFailed', { errors: errors.join(', ') }) + `\n\n${lang === 'ja' ? '入力内容は保持されています。もう一度送信してください。' : 'Your input is preserved. Please try submitting again.'}`;
+    showAlert(errMsg, 'error');
+  }
+
   btn.disabled = false;
   btn.innerHTML = esc(t('submitBtn'));
-
-  if (success > 0) {
-    showAlert(tf('applicationComplete', { count: success, errors: errors.length ? ` ${lang === 'ja' ? '失敗' : 'Failed'}: ${errors.join(', ')}` : '' }), errors.length === 0 ? 'success' : 'error');
-    if (errors.length === 0) setTimeout(() => { location.href = 'https://liff.line.me/2010388137-gFA7Ik77'; }, 2000);
-  } else {
-    showAlert(tf('applicationFailed', { errors: errors.join(', ') }), 'error');
-  }
+  isSubmitting = false;
 }
 
 // ===== 家族席送信 =====
 async function submitFamily() {
+  if (isSubmitting) return;
+  isSubmitting = true;
   clearAlert();
 
   const entries = [];
@@ -2742,9 +2713,19 @@ async function submitFamily() {
     entries.push({ gameId, quantityAdult: qty, pickupMethod: pickup, parkingCount: parking, receiverName: receiver, note });
   });
 
-  if (entries.length === 0) { showAlert(t('noGamesAccepting'), 'error'); return; }
+  if (entries.length === 0) { showAlert(t('noGamesAccepting'), 'error'); isSubmitting = false; return; }
   const missingReceiver = entries.find(e => !e.receiverName);
-  if (missingReceiver) { showAlert(tf('missingReceiverLabel', { game: getGameLabel(missingReceiver.gameId) }), 'error'); return; }
+  if (missingReceiver) {
+    const gameId = missingReceiver.gameId;
+    const field = document.getElementById('rec-fam-' + gameId);
+    if (field) {
+      field.classList.add('error');
+      field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    showAlert(tf('missingReceiverLabel', { game: getGameLabel(gameId) }), 'error');
+    isSubmitting = false;
+    return;
+  }
   // 追加申込を許可: 既存申込があっても送信可（Workerが枚数を加算して更新する）
 
   const btn = document.getElementById('fam-submit');
@@ -2779,19 +2760,34 @@ async function submitFamily() {
     }
   }
 
+  if (success > 0) {
+    const fullMsg = errors.length > 0 && success < entries.length
+      ? tf('applicationComplete', { count: success, errors: errors.length ? ` ${lang === 'ja' ? '失敗' : 'Failed'}: ${errors.join(', ')}` : '' }) + `\n\n${lang === 'ja' ? '入力内容は保持されています。もう一度送信してください。' : 'Your input is preserved. Please try submitting again.'}`
+      : tf('applicationComplete', { count: success, errors: errors.length ? ` ${lang === 'ja' ? '失敗' : 'Failed'}: ${errors.join(', ')}` : '' });
+    showAlert(fullMsg, errors.length === 0 ? 'success' : 'error');
+    if (errors.length === 0) {
+      btn.disabled = true;
+      btn.innerHTML = esc(t('submitBtn'));
+      document.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+      history.replaceState(null, '', 'player-dashboard.html');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      location.href = 'https://liff.line.me/2010388137-gFA7Ik77';
+      return;
+    }
+  } else {
+    const errMsg = tf('applicationFailed', { errors: errors.join(', ') }) + `\n\n${lang === 'ja' ? '入力内容は保持されています。もう一度送信してください。' : 'Your input is preserved. Please try submitting again.'}`;
+    showAlert(errMsg, 'error');
+  }
+
   btn.disabled = false;
   btn.innerHTML = esc(t('submitBtn'));
-
-  if (success > 0) {
-    showAlert(tf('applicationComplete', { count: success, errors: errors.length ? ` ${lang === 'ja' ? '失敗' : 'Failed'}: ${errors.join(', ')}` : '' }), errors.length === 0 ? 'success' : 'error');
-    if (errors.length === 0) setTimeout(() => { location.href = 'https://liff.line.me/2010388137-gFA7Ik77'; }, 2000);
-  } else {
-    showAlert(tf('applicationFailed', { errors: errors.join(', ') }), 'error');
-  }
+  isSubmitting = false;
 }
 
 // ===== 有料チケット送信 =====
 async function submitPaid() {
+  if (isSubmitting) return;
+  isSubmitting = true;
   clearAlert();
   const gameId = document.getElementById('paid-game').value;
   const seat = document.getElementById('paid-seat').value;
@@ -2799,13 +2795,17 @@ async function submitPaid() {
   const payment = document.querySelector('input[name="paid-payment"]:checked')?.value;
   const pickup = document.querySelector('input[name="paid-pickup"]:checked')?.value;
 
-  if (!gameId) { showAlert(t('selectGame'), 'error'); return; }
-  if (!seat) { showAlert(t('selectSeatCategory'), 'error'); return; }
-  if (!payment) { showAlert(t('selectPaymentMethod'), 'error'); return; }
-  if (!pickup) { showAlert(t('selectPickupMethod'), 'error'); return; }
+  if (!gameId) { showAlert(t('selectGame'), 'error'); isSubmitting = false; return; }
+  if (!seat) { showAlert(t('selectSeatCategory'), 'error'); isSubmitting = false; return; }
+  if (!payment) { showAlert(t('selectPaymentMethod'), 'error'); isSubmitting = false; return; }
+  if (!pickup) { showAlert(t('selectPickupMethod'), 'error'); isSubmitting = false; return; }
+  if (pickup === 'day') {
+    const receiver = document.getElementById('paid-receiver').value.trim();
+    if (!receiver) { showAlert(t('missingReceiverLabel', { game: '当日受取' }), 'error'); isSubmitting = false; return; }
+  }
 
   const g = games.find(g => g.gameId === gameId);
-  if (g?.isDeadlinePassed) { showAlert(t('deadlinePassedMessage'), 'error'); return; }
+  if (g?.isDeadlinePassed) { showAlert(t('deadlinePassedMessage'), 'error'); isSubmitting = false; return; }
   // 追加申込を許可: 既存申込があっても送信可（Workerが枚数を加算して更新する）
 
   const btn = document.getElementById('paid-submit');
@@ -2833,12 +2833,17 @@ async function submitPaid() {
     if (!r.ok) throw new Error(r.error?.message || r.error);
     rememberSubmittedApplication(gameId, 'paid', parseInt(document.getElementById('val-paid')?.textContent) || 0);
     showAlert(t('submitSuccess'), 'success');
+    btn.disabled = true;
     btn.innerHTML = `${esc(t('submitted'))} <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="vertical-align:middle" aria-hidden="true"><polyline points="3 8 6.5 11.5 13 5"/></svg>`;
-    setTimeout(() => { location.href = 'https://liff.line.me/2010388137-gFA7Ik77'; }, 2000);
+    document.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+    history.replaceState(null, '', 'player-dashboard.html');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    location.href = 'https://liff.line.me/2010388137-gFA7Ik77';
   } catch (e) {
     showAlert(tf('applicationFailed', { errors: e.message }), 'error');
     btn.disabled = false;
     btn.innerHTML = esc(t('submitBtn'));
+    isSubmitting = false;
   }
 }
 
@@ -2867,7 +2872,7 @@ function demoCallGAS(method, params) {
   ];
   const today = new Date();
   if (params.action === 'getGames') {
-    return { ok: true, data: raw.map(g => {
+    return { ok: true, data: { serverNow: new Date().toISOString(), games: raw.map(g => {
       const deadlineDate = new Date(new Date(g[1]).getTime() - 3*24*60*60*1000);
       const deadlineStr = deadlineDate.toISOString().split('T')[0];
       // isDeadlinePassed: 申込締切日（試合3日前）を過ぎたか
@@ -2877,7 +2882,7 @@ function demoCallGAS(method, params) {
         deadline: deadlineStr,
         isDeadlinePassed
       };
-    })};
+    })}};
   }
   if (params.action === 'getApplications') {
     const apps = JSON.parse(localStorage.getItem('demo_apps') || '[]');
@@ -2894,7 +2899,10 @@ function demoCallGAS(method, params) {
 }
 
 function showAlert(msg, type) {
-  document.getElementById('alert-area').innerHTML = `<div class="alert alert-${esc(type)}">${esc(msg)}</div>`;
+  const msgWithLink = type === 'success' && msg.includes('完了')
+    ? msg + `<br><a href="https://liff.line.me/2010388137-gFA7Ik77" style="color: inherit; text-decoration: underline; font-weight: 600;">${lang === 'ja' ? '→ マイ申込状況で全申込を確認' : '→ Check all applications'}</a>`
+    : msg;
+  document.getElementById('alert-area').innerHTML = `<div class="alert alert-${esc(type)}">${msgWithLink}</div>`;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 function clearAlert() { document.getElementById('alert-area').innerHTML = ''; }

@@ -464,22 +464,21 @@ test("GET /api/games is public and returns mapped games", async () => {
   const json = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(json, {
-    ok: true,
-    data: [
-      {
-        gameId: "G01",
-        gameNo: "G01",
-        date: "2026-10-08",
-        dayOfWeek: "木",
-        tipoff: null,
-        opponent: "川崎ブレイブサンダース",
-        deadline: "2026-10-01",
-        isDeadlinePassed: false,
-        season: "2026-27",
-        isActive: true,
-      },
-    ],
+  assert.equal(json.ok, true);
+  assert.ok(json.data.serverNow, "serverNow should be present");
+  assert.ok(Array.isArray(json.data.games), "games should be an array");
+  assert.equal(json.data.games.length, 1);
+  assert.deepEqual(json.data.games[0], {
+    gameId: "G01",
+    gameNo: "G01",
+    date: "2026-10-08",
+    dayOfWeek: "木",
+    tipoff: null,
+    opponent: "川崎ブレイブサンダース",
+    deadline: "2026-10-01",
+    isDeadlinePassed: false,
+    season: "2026-27",
+    isActive: true,
   });
 });
 

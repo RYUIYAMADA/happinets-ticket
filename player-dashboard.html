@@ -1326,7 +1326,7 @@ let applications = [];
 let currentFilter = 'all';
 const GAMES_CACHE_KEY = 'games_cache';
 const GAMES_CACHE_TS_KEY = 'games_cache_ts';
-const GAMES_CACHE_TTL_MS = 5 * 60 * 1000;
+const GAMES_CACHE_TTL_MS = 1 * 60 * 1000;  // OPS-002: 5分 → 1分に短縮（申込反映の鮮度向上）
 
 const TICKET_LABELS = {
   invite: { ja: '招待', en: 'Invite' },
@@ -1479,8 +1479,13 @@ async function loadData() {
     if (!gamesRes.ok) throw new Error(gamesRes.error?.message || gamesRes.error);
     if (!appsRes.ok) throw new Error(appsRes.error?.message || appsRes.error);
     // 試合の3段階表示ロジック（③: 試合日翌日12:00JST以降は除外）
-    const nowJst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-    games = (gamesRes.data || []).filter(g => {
+    // serverNow（サーバー時刻 ISO）があれば使い、端末時計ズレを回避する
+    const gamesArray = Array.isArray(gamesRes.data) ? gamesRes.data : (gamesRes.data?.games || []);
+    const serverNow = gamesRes.data?.serverNow || null;
+    const nowJst = serverNow
+      ? new Date(new Date(serverNow).toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
+      : new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+    games = gamesArray.filter(g => {
       if (!g.date) return true;
       const gameDate = new Date(g.date);
       const hideAfter = new Date(gameDate);
@@ -1801,7 +1806,7 @@ function demoCallGAS(method, params) {
   ];
   const today = new Date();
   if (params.action === 'getGames') {
-    return { ok: true, data: raw.map(g => {
+    return { ok: true, data: { serverNow: new Date().toISOString(), games: raw.map(g => {
       const deadlineDate = new Date(new Date(g[1]).getTime() - 3*24*60*60*1000);
       const deadlineStr = deadlineDate.toISOString().split('T')[0];
       // isDeadlinePassed: 申込締切日（試合3日前）を過ぎたか
@@ -1811,7 +1816,7 @@ function demoCallGAS(method, params) {
         deadline: deadlineStr,
         isDeadlinePassed
       };
-    })};
+    })}};
   }
   if (params.action === 'getApplications') {
     const apps = JSON.parse(localStorage.getItem('demo_apps') || '[]');

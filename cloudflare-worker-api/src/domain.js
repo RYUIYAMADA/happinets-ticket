@@ -101,6 +101,10 @@ export function parseApplicationInput(body, nowIso) {
   if ([quantityAdult, quantityChild, quantityInfant, parkingCount].some((value) => value < 0 || value > 10)) {
     throw new HttpError(400, "BAD_REQUEST", "quantity is invalid");
   }
+  const receiverName = String(body.receiverName || "");
+  if (!receiverName) {
+    throw new HttpError(400, "BAD_REQUEST", "receiverName is required");
+  }
   return {
     gameId: String(body.gameId),
     category,
@@ -109,7 +113,7 @@ export function parseApplicationInput(body, nowIso) {
     quantityInfant,
     seatType: String(body.seatType || ""),
     seatRequest: String(body.seatRequest || ""),
-    receiverName: String(body.receiverName || ""),
+    receiverName,
     pickupMethod: String(body.pickupMethod || ""),
     paymentMethod: String(body.paymentMethod || ""),
     parkingCount,

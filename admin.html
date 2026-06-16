@@ -872,6 +872,29 @@
       <div class="kpi-card"><div class="kpi-num green" id="kpi-confirmed">—</div><div class="kpi-lbl">確保済み</div></div>
       <div class="kpi-card"><div class="kpi-num red" id="kpi-rejected">—</div><div class="kpi-lbl">対応不可</div></div>
     </div>
+    <!-- M-04: 選手×試合×種別別申込枚数サマリ -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">申込枚数サマリ（選手・試合・種別別）</span>
+      </div>
+      <div class="table-wrap" style="max-height: 400px; overflow-y: auto;">
+        <table style="font-size: 13px;">
+          <thead>
+            <tr style="position: sticky; top: 0;">
+              <th scope="col" aria-sort="none">選手</th>
+              <th scope="col" aria-sort="none">試合</th>
+              <th scope="col" aria-sort="none">招待</th>
+              <th scope="col" aria-sort="none">家族</th>
+              <th scope="col" aria-sort="none">有料</th>
+              <th scope="col" aria-sort="none">合計</th>
+            </tr>
+          </thead>
+          <tbody id="summary-tbody">
+            <tr><td colspan="6" class="empty-msg"><span class="spinner"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
     <!-- 確認中の申込 3タブ -->
     <div class="card" style="overflow:visible;">
       <div class="card-header">
@@ -1533,7 +1556,7 @@ async function loadAll() {
     if (!gr.ok) throw new Error(gr.error?.message || gr.error || '試合データ取得失敗');
     if (!ar.ok) throw new Error(ar.error?.message || ar.error || '申込データ取得失敗');
     if (!pr.ok) throw new Error(pr.error?.message || pr.error || '選手データ取得失敗');
-    games = gr.data || [];
+    games = Array.isArray(gr.data) ? gr.data : (gr.data?.games || []);
     applications = ar.data || [];
     players = pr.data || [];
     updateKPI();
@@ -1541,6 +1564,7 @@ async function loadAll() {
     renderApplications();
     renderMatrix();
     renderDeadlines();
+    renderSummary();  // M-04: 選手×試合×種別サマリを表示
     // LINE統計は取得失敗してもKPI表示を止めない
     if (lr.ok) {
       renderLineStats(lr.data || {});
@@ -1854,6 +1878,59 @@ function renderDeadlines() {
       </td>
     </tr>`;
   }).join('');
+}
+
+function renderSummary() {
+  // M-04: 選手×試合×種別の合計枚数サマリを表示
+  const summaryMap = {};  // key: "playerId_gameId" → { invite: qty, family: qty, paid: qty }
+
+  applications.filter(a => a.status !== 'cancelled').forEach(a => {
+    const key = `${a.playerId}_${a.gameId}`;
+    if (!summaryMap[key]) summaryMap[key] = { invite: 0, family: 0, paid: 0 };
+    const type = a.ticketType || 'unknown';
+    if (type === 'invite' || type === 'family' || type === 'paid') {
+      const qty = (a.quantityAdult || 0) + (a.quantityChild || 0) + (a.quantityInfant || 0) || 1;
+      summaryMap[key][type] += qty;
+    }
+  });
+
+  // 行データを生成: [playerId, gameId] でソート
+  const rows = [];
+  Object.keys(summaryMap).forEach(key => {
+    const [playerId, gameId] = key.split('_');
+    const playerName = getPlayerName(playerId);
+    const gameLabel = getGameLabel(gameId);
+    const summary = summaryMap[key];
+    rows.push({
+      playerName,
+      gameLabel,
+      invite: summary.invite || 0,
+      family: summary.family || 0,
+      paid: summary.paid || 0,
+      total: (summary.invite || 0) + (summary.family || 0) + (summary.paid || 0)
+    });
+  });
+
+  // ソート: 選手 → 試合
+  rows.sort((a, b) => {
+    if (a.playerName !== b.playerName) return a.playerName.localeCompare(b.playerName);
+    return a.gameLabel.localeCompare(b.gameLabel);
+  });
+
+  const tbody = document.getElementById('summary-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">申込データなし</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => `<tr>
+    <td style="font-weight: 600;">${esc(r.playerName)}</td>
+    <td style="font-size: 12px;">${esc(r.gameLabel)}</td>
+    <td style="text-align: center; color: var(--text-sub);">${r.invite || '—'}</td>
+    <td style="text-align: center; color: var(--text-sub);">${r.family || '—'}</td>
+    <td style="text-align: center; color: var(--text-sub);">${r.paid || '—'}</td>
+    <td style="text-align: center; font-weight: 600; color: var(--primary);">${r.total}</td>
+  </tr>`).join('');
 }
 
 async function bulkSetDeadlines(overwrite = false) {
@@ -2319,11 +2396,11 @@ function demoCallGAS(method, params) {
   ];
   const today = new Date();
   if (params.action === 'getGames') {
-    return { ok: true, data: raw.map(g => ({
+    return { ok: true, data: { serverNow: new Date().toISOString(), games: raw.map(g => ({
       gameId: g[0], date: g[1], dayOfWeek: g[2], opponent: g[3],
       deadline: new Date(new Date(g[1]).getTime()-3*24*60*60*1000).toISOString().split('T')[0],
       isDeadlinePassed: new Date(g[1]) < today
-    }))};
+    }))}};
   }
   if (params.action === 'getAllApplications') {
     const apps = JSON.parse(localStorage.getItem('demo_apps') || '[]');

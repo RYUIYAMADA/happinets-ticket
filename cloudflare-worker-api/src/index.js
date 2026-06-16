@@ -1,4 +1,5 @@
 import {
+  deadlineAt,
   parseApplicationInput,
   parseGameInput,
   parsePlayerInput,
@@ -48,7 +49,7 @@ export function createApp(options = {}) {
 
   return {
     async fetch(request, env) {
-      const origin = env.ALLOWED_ORIGIN || "";
+      const origin = await resolveOrigin(request, env);
       try {
         if (request.method === "OPTIONS") {
           const corsOpts = {
@@ -317,6 +318,13 @@ async function verifyLineIdToken(idToken, channelId) {
   });
   if (!verifyRes.ok) {
     // LINEが検証エラーを返した場合（期限切れ・不正トークン等）
+    try {
+      const errorBody = await verifyRes.text();
+      console.error("verifyLineIdToken_error", { status: verifyRes.status, body: errorBody });
+    } catch (e) {
+      // レスポンス読み込み失敗時もログには出す
+      console.error("verifyLineIdToken_error", { status: verifyRes.status });
+    }
     throw new HttpError(401, "INVALID_ID_TOKEN", "ID token verification failed");
   }
   const payload = await verifyRes.json();
@@ -368,13 +376,17 @@ async function handleListGames(url, env, origin, nowIso) {
     season: url.searchParams.get("season") || "",
     active: activeParam === null ? undefined : activeParam === "true",
   }, nowIso);
-  return ok(games, origin);
+  return ok({
+    serverNow: nowIso,
+    games,
+  }, origin);
 }
 
 async function handleCreateApplication(request, env, origin, nowIso, randomToken, sendConfirmPush) {
   const auth = await requirePlayerSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
   const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
   const payload = parseApplicationInput(body, nowIso);
   const appId = randomToken();
   const { appId: resolvedAppId } = await createApplication(env.DB, auth.session, payload, appId, nowIso);
@@ -414,13 +426,14 @@ async function handlePatchApplication(request, env, origin, nowIso, appId) {
     throw new HttpError(403, "FORBIDDEN", "Forbidden");
   }
 
-  // 締切チェック
-  const dl = appRow.deadline ? `${appRow.deadline}T03:00:00.000Z` : null;
+  // 締切チェック（domain.js の deadlineAt に統一）
+  const dl = appRow.deadline ? deadlineAt(appRow.deadline) : null;
   if (dl && dl < nowIso) {
     throw new HttpError(403, "DEADLINE_PASSED", "Deadline has passed");
   }
 
   const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
   const qty = parseQuantityInput(body);
   return ok(
     await setApplicationQuantity(
@@ -442,6 +455,7 @@ async function handleAdminUpdateApplicationQuantity(request, env, origin, nowIso
   if (!auth.ok) return auth.response;
   requireTicketAdmin(auth.session);
   const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
   const qty = parseQuantityInput(body);
   return ok(
     await setApplicationQuantity(
@@ -478,9 +492,14 @@ async function handleAdminUpdateStatus(request, env, origin, nowIso, appId) {
   const auth = await requireAdminSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
   requireTicketAdmin(auth.session);
-  const status = parseStatusInput(await readJson(request));
+  const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
+  const status = parseStatusInput(body);
   const result = await updateApplicationStatus(env.DB, appId, status, auth.session, nowIso);
-  await sendStatusUpdatePush(env, appId, status);
+  // push失敗がステータス更新の500に昇格しないよう非同期fire-and-forget化
+  sendStatusUpdatePush(env, appId, status).catch((err) => {
+    console.error("status_update_push_unhandled", { appId, status, error: err?.message });
+  });
   return ok(result, origin);
 }
 
@@ -494,7 +513,9 @@ async function handleAdminCreatePlayer(request, env, origin, nowIso) {
   const auth = await requireAdminSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
   requireTicketAdmin(auth.session);
-  const payload = parsePlayerInput(await readJson(request));
+  const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
+  const payload = parsePlayerInput(body);
   return ok(await createPlayer(env.DB, payload), origin, 201);
 }
 
@@ -502,7 +523,9 @@ async function handleAdminUpdatePlayer(request, env, origin, nowIso, playerNo) {
   const auth = await requireAdminSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
   requireTicketAdmin(auth.session);
-  const payload = parsePlayerInput(await readJson(request), playerNo);
+  const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
+  const payload = parsePlayerInput(body, playerNo);
   return ok(await updatePlayer(env.DB, payload.playerNo, payload), origin);
 }
 
@@ -510,14 +533,18 @@ async function handleAdminCreateGame(request, env, origin, nowIso) {
   const auth = await requireAdminSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
   requireTicketAdmin(auth.session);
-  return ok(await createGame(env.DB, parseGameInput(await readJson(request))), origin, 201);
+  const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
+  return ok(await createGame(env.DB, parseGameInput(body)), origin, 201);
 }
 
 async function handleAdminUpdateGame(request, env, origin, nowIso, gameNo) {
   const auth = await requireAdminSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
   requireTicketAdmin(auth.session);
-  return ok(await updateGame(env.DB, gameNo, parseGameInput(await readJson(request), gameNo), nowIso), origin);
+  const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
+  return ok(await updateGame(env.DB, gameNo, parseGameInput(body, gameNo), nowIso), origin);
 }
 
 async function handleAdminDeleteGame(request, env, origin, nowIso, gameNo) {
@@ -532,6 +559,7 @@ async function handleAdminUpdateDeadline(request, env, origin, nowIso, gameNo) {
   if (!auth.ok) return auth.response;
   requireTicketAdmin(auth.session);
   const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
   if (!body?.deadline) throw new HttpError(400, "BAD_REQUEST", "deadline is required");
   return ok(await updateGameDeadline(env.DB, gameNo, body.deadline), origin);
 }
@@ -541,6 +569,7 @@ async function handleReplaceSeason(request, env, origin, nowIso) {
   if (!auth.ok) return auth.response;
   requireTicketAdmin(auth.session);
   const body = await readJson(request);
+  if (!body) throw new HttpError(400, "BAD_REQUEST", "Request body must be JSON");
   if (!body?.season || !Array.isArray(body.games)) throw new HttpError(400, "BAD_REQUEST", "season and games are required");
   return ok(await replaceSeason(env.DB, body.season, body.games), origin);
 }
@@ -548,6 +577,7 @@ async function handleReplaceSeason(request, env, origin, nowIso) {
 async function handleLineStats(request, env, origin, nowIso) {
   const auth = await requireAdminSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
+  requireTicketAdmin(auth.session);
   return ok(await getLineStats(env), origin);
 }
 
@@ -730,6 +760,20 @@ async function readJson(request) {
   const contentType = request.headers.get("Content-Type") || "";
   if (!contentType.includes("application/json")) return null;
   return request.json();
+}
+
+/**
+ * リクエストのOriginヘッダと設定値からCORSオリジンを判定。
+ * ALLOWED_ORIGIN がカンマ区切り複数値の場合は全て検証対象にする。
+ */
+async function resolveOrigin(request, env) {
+  const requestOrigin = request.headers.get("Origin") || "";
+  const configOrigins = (env.ALLOWED_ORIGIN || "").split(",").map(o => o.trim()).filter(Boolean);
+
+  if (!configOrigins.length) return "";
+  if (configOrigins.length === 1) return configOrigins[0];
+  // 複数許可オリジンがある場合、リクエストOriginが一致すれば反射（厳密チェック）
+  return configOrigins.includes(requestOrigin) ? requestOrigin : "";
 }
 
 function addSeconds(isoString, seconds) {

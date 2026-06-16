@@ -20,28 +20,34 @@ const LINE_LINK_FAILURE_LIMIT = 5;
 const LINE_LINK_LOCK_SECONDS = 10 * 60;
 
 export async function handleLineWebhook(request, env, origin, nowIso, randomToken) {
-  const secret = env.LINE_CHANNEL_SECRET || "";
-  if (!secret) throw new HttpError(503, "LINE_UNAVAILABLE", "Service Unavailable");
-
-  const bodyText = await request.text();
-  const signature = request.headers.get("X-Line-Signature") || "";
-  const verified = await verifyLineSignature(bodyText, signature, secret);
-  if (!verified) {
-    return error(401, "UNAUTHORIZED", "Unauthorized", origin);
-  }
-
-  let payload;
   try {
-    payload = JSON.parse(bodyText);
-  } catch {
-    throw new HttpError(400, "BAD_REQUEST", "Invalid JSON");
-  }
+    const secret = env.LINE_CHANNEL_SECRET || "";
+    if (!secret) throw new HttpError(503, "LINE_UNAVAILABLE", "Service Unavailable");
 
-  const events = Array.isArray(payload?.events) ? payload.events : [];
-  for (const event of events) {
-    await processLineEvent(event, env, nowIso, randomToken);
+    const bodyText = await request.text();
+    const signature = request.headers.get("X-Line-Signature") || "";
+    const verified = await verifyLineSignature(bodyText, signature, secret);
+    if (!verified) {
+      return error(401, "UNAUTHORIZED", "Unauthorized", origin);
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(bodyText);
+    } catch {
+      throw new HttpError(400, "BAD_REQUEST", "Invalid JSON");
+    }
+
+    const events = Array.isArray(payload?.events) ? payload.events : [];
+    for (const event of events) {
+      await processLineEvent(event, env, nowIso, randomToken);
+    }
+    return ok({ accepted: true }, origin);
+  } catch (err) {
+    // LINE の無限リトライを防ぐため、いかなるエラーでも 200 を返す
+    console.error("handleLineWebhook_error", { error: err?.message, stack: err?.stack });
+    return ok({ accepted: true, error: err?.message }, origin);
   }
-  return ok({ accepted: true }, origin);
 }
 
 export async function handleScheduledLineJobs(controller, env) {
@@ -357,8 +363,20 @@ async function handleTextMessage(env, replyToken, userId, linkedPlayer, text, no
     return;
   }
 
+  // session timeout: state が null の場合、各ステップの先頭で TTL切れを検知して案内
+  if (!state) {
+    await replyToLine(env, replyToken, [buildMainMenuMessage("セッションが切れました。もう一度「チケット申込」から始めてください。")]);
+    return;
+  }
+
   if (state?.step === "SELECTING_RECEIVER") {
-    state.receiverName = text;
+    // バリデーション: 受取者名の入力チェック
+    const trimmedText = text.trim();
+    if (!trimmedText || trimmedText.length > 100) {
+      await replyToLine(env, replyToken, [{ type: "text", text: "受取者氏名を正しく入力してください（1〜100文字）。" }]);
+      return;
+    }
+    state.receiverName = trimmedText;
     state.step = "CONFIRMING";
     await persistState(env, userId, state, nowIso);
     await replyToLine(env, replyToken, [await buildConfirmMessage(env, state)]);
@@ -487,8 +505,18 @@ async function handlePostback(env, replyToken, userId, linkedPlayer, data, nowIs
     }
     // 二重加算防止: clearConversationState を先に実行し、2回目の確定タップは state=null で弾く
     await clearConversationState(env.DB, userId);
-    await submitLineApplication(env, linkedPlayer, state, nowIso, randomToken);
-    await replyToLine(env, replyToken, [buildMainMenuMessage("申込が完了しました！担当から確定の連絡が届きます。")]);
+    try {
+      await submitLineApplication(env, linkedPlayer, state, nowIso, randomToken);
+      await replyToLine(env, replyToken, [buildMainMenuMessage("申込が完了しました！担当から確定の連絡が届きます。")]);
+    } catch (err) {
+      // 409 DUPLICATE
+      if (err?.status === 409) {
+        await replyToLine(env, replyToken, [buildMainMenuMessage(err.message || "この内容は既に申込済みです。")]);
+      } else {
+        // その他エラー
+        await replyToLine(env, replyToken, [buildMainMenuMessage(err.message || "申込に失敗しました。もう一度お試しください。")]);
+      }
+    }
     return;
   }
 
@@ -499,23 +527,36 @@ async function handlePostback(env, replyToken, userId, linkedPlayer, data, nowIs
 }
 
 async function submitLineApplication(env, player, state, nowIso, randomToken) {
-  await createApplication(env.DB, { player_id: player.id }, {
-    gameId: state.gameId,
-    category: state.ticketType,
-    quantityAdult: Number.parseInt(String(state.adultCount || 1), 10) || 1,
-    quantityChild: 0,
-    quantityInfant: 0,
-    seatType: state.seatType || "",
-    seatRequest: "",
-    receiverName: state.receiverName || player.name,
-    pickupMethod: "pre",
-    paymentMethod: state.payment || "",
-    parkingCount: 0,
-    note: "LINE申込",
-    lang: "ja",
-    source: "line",
-    createdAt: nowIso,
-  }, randomToken(), nowIso);
+  try {
+    const result = await createApplication(env.DB, { player_id: player.id }, {
+      gameId: state.gameId,
+      category: state.ticketType,
+      quantityAdult: Number.parseInt(String(state.adultCount || 1), 10) || 1,
+      quantityChild: 0,
+      quantityInfant: 0,
+      seatType: state.seatType || "",
+      seatRequest: "",
+      receiverName: state.receiverName || player.name,
+      pickupMethod: "pre",
+      paymentMethod: state.payment || "",
+      parkingCount: 0,
+      note: "LINE申込",
+      lang: "ja",
+      source: "line",
+      createdAt: nowIso,
+    }, randomToken(), nowIso);
+
+    // 申込成功後、確認メッセージをpushする
+    await sendApplicationConfirmPush(env, result.appId);
+  } catch (err) {
+    // 409 DUPLICATE: 既に同内容で申込済み
+    if (err?.status === 409) {
+      throw new HttpError(409, "DUPLICATE", "この内容は既に申込済みです");
+    }
+    // その他のエラー: 汎用エラーメッセージ
+    console.error("submitLineApplication_error", { playerId: player.id, error: err?.message, stack: err?.stack });
+    throw new HttpError(400, "SUBMIT_ERROR", "申込に失敗しました。もう一度お試しください");
+  }
 }
 
 async function persistState(env, userId, state, nowIso) {

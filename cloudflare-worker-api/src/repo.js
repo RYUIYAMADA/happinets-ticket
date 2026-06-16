@@ -33,6 +33,15 @@ export async function linkLineUserIdToPlayer(db, playerId, lineUserId) {
   const player = await findPlayerByPlayerNo(db, playerId);
   if (!player) return null;
 
+  // 指定 line_user_id が既に別の player に紐付いているかチェック
+  const alreadyLinked = await db.prepare(
+    `SELECT id FROM players WHERE line_user_id = ?1 AND id != ?2`
+  ).bind(lineUserId, player.id).first();
+
+  if (alreadyLinked) {
+    throw new HttpError(409, "CONFLICT", "Line user ID already linked to another player");
+  }
+
   // 既存の line_user_id が別 player に紐付いている場合は解除（再連携対応）
   const operations = [
     // 旧 player の line_user_id を解除
@@ -232,7 +241,7 @@ export async function cancelApplication(db, appId, playerId, nowIso) {
   if ((result[0]?.meta?.changes || 0) === 0) {
     const exists = await db.prepare(`SELECT app_id FROM applications WHERE app_id = ?1`).bind(appId).first();
     if (!exists) throw new HttpError(404, "NOT_FOUND", "Application not found");
-    throw new HttpError(401, "UNAUTHORIZED", "Unauthorized");
+    throw new HttpError(403, "FORBIDDEN", "Forbidden");
   }
   return { applicationId: appId, status: "cancelled" };
 }
@@ -308,6 +317,7 @@ export async function findApplicationForConfirmPush(db, appId) {
   const row = await db.prepare(
     `SELECT
        a.app_id,
+       a.applicant_name,
        a.category,
        a.quantity_adult,
        a.lang,
@@ -348,6 +358,7 @@ export async function findApplicationForConfirmPush(db, appId) {
 
   return {
     appId: row.app_id,
+    applicantName: row.applicant_name || "",
     lineUserId: row.line_user_id,
     category: row.category,
     quantityAdult: row.quantity_adult,
@@ -417,13 +428,20 @@ export async function createGame(db, payload) {
   const date = payload.date;
   const dayOfWeek = payload.dayOfWeek || deriveDayOfWeek(date);
   const deadline = payload.deadline || deriveDeadline(date);
-  await db.batch([
-    db.prepare(
-      `INSERT INTO games (game_no, date, tipoff, opponent, day_of_week, deadline, season, is_active)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)`
-    ).bind(nextNo, date, payload.tipoff, payload.opponent, dayOfWeek, deadline, payload.season || "2026-27"),
-    audit(db, "admin:ticket", "game_crud", `game:${nextNo}`, { type: "create" }),
-  ]);
+  try {
+    await db.batch([
+      db.prepare(
+        `INSERT INTO games (game_no, date, tipoff, opponent, day_of_week, deadline, season, is_active)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)`
+      ).bind(nextNo, date, payload.tipoff, payload.opponent, dayOfWeek, deadline, payload.season || "2026-27"),
+      audit(db, "admin:ticket", "game_crud", `game:${nextNo}`, { type: "create" }),
+    ]);
+  } catch (err) {
+    if (err?.message?.includes("UNIQUE constraint failed")) {
+      throw new HttpError(409, "DUPLICATE", `Game number ${nextNo} already exists`);
+    }
+    throw err;
+  }
   return mapGameRow({
     game_no: nextNo,
     date,
@@ -502,6 +520,17 @@ export async function deleteGame(db, gameNo) {
 }
 
 export async function replaceSeason(db, season, games) {
+  // season 入力検証
+  if (!season || typeof season !== "string") {
+    throw new HttpError(400, "BAD_REQUEST", "season must be a non-empty string");
+  }
+  if (!Array.isArray(games) || games.length === 0) {
+    throw new HttpError(400, "BAD_REQUEST", "games must be a non-empty array");
+  }
+
+  // games 各要素を parseGameInput で検証
+  const validatedGames = games.map((game) => parseGameInput(game));
+
   const counts = await db.prepare(
     `SELECT
        (SELECT COUNT(*) FROM games WHERE season = ?1) AS games_count,
@@ -511,7 +540,7 @@ export async function replaceSeason(db, season, games) {
     db.prepare(`DELETE FROM applications WHERE game_id IN (SELECT id FROM games WHERE season = ?1)`).bind(season),
     db.prepare(`DELETE FROM games WHERE season = ?1`).bind(season),
   ];
-  for (const game of games) {
+  for (const game of validatedGames) {
     statements.push(
       db.prepare(
         `INSERT INTO games (game_no, date, tipoff, opponent, day_of_week, deadline, season, is_active)
@@ -519,12 +548,12 @@ export async function replaceSeason(db, season, games) {
       ).bind(game.gameNo, game.date, game.tipoff ?? null, game.opponent, game.dayOfWeek || deriveDayOfWeek(game.date), game.deadline || deriveDeadline(game.date), season)
     );
   }
-  statements.push(audit(db, "admin:ticket", "replace_season", `season:${season}`, { inserted: games.length }));
+  statements.push(audit(db, "admin:ticket", "replace_season", `season:${season}`, { inserted: validatedGames.length }));
   await db.batch(statements);
   return {
     backedUpGames: counts?.games_count || 0,
     backedUpApps: counts?.apps_count || 0,
-    inserted: games.length,
+    inserted: validatedGames.length,
   };
 }
 
