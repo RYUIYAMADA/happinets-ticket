@@ -2123,6 +2123,7 @@ function handleRelogin() {
 
 /** 認証切れ時の共通処理: LIFF内なら closeWindow、外なら html-share トップへ */
 function handleUnauthorizedNavigation() {
+  isSubmitting = false;
   sessionStorage.clear();
   if (typeof liff !== 'undefined' && liff.isInClient && liff.isInClient()) {
     liff.closeWindow();

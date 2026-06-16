@@ -45,8 +45,9 @@ export async function handleLineWebhook(request, env, origin, nowIso, randomToke
     return ok({ accepted: true }, origin);
   } catch (err) {
     // LINE の無限リトライを防ぐため、いかなるエラーでも 200 を返す
+    // レスポンスにエラー詳細を含めない（DB構造・スタック断片の露出防止）
     console.error("handleLineWebhook_error", { error: err?.message, stack: err?.stack });
-    return ok({ accepted: true, error: err?.message }, origin);
+    return ok({ accepted: true }, origin);
   }
 }
 

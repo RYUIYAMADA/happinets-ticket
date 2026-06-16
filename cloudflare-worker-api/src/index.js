@@ -318,9 +318,16 @@ async function verifyLineIdToken(idToken, channelId) {
   });
   if (!verifyRes.ok) {
     // LINEが検証エラーを返した場合（期限切れ・不正トークン等）
+    // idToken・ユーザー情報の全文ログを避け error フィールドのみ記録する
     try {
       const errorBody = await verifyRes.text();
-      console.error("verifyLineIdToken_error", { status: verifyRes.status, body: errorBody });
+      let errorCode;
+      try {
+        errorCode = JSON.parse(errorBody)?.error;
+      } catch {
+        // parse失敗時は error コードなし
+      }
+      console.error("verifyLineIdToken_error", errorCode ? { status: verifyRes.status, error: errorCode } : { status: verifyRes.status });
     } catch (e) {
       // レスポンス読み込み失敗時もログには出す
       console.error("verifyLineIdToken_error", { status: verifyRes.status });
@@ -506,6 +513,7 @@ async function handleAdminUpdateStatus(request, env, origin, nowIso, appId) {
 async function handleAdminPlayers(request, env, origin, nowIso) {
   const auth = await requireAdminSession(request, env, origin, nowIso);
   if (!auth.ok) return auth.response;
+  requireTicketAdmin(auth.session);
   return ok(await listPlayers(env.DB), origin);
 }
 

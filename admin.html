@@ -1882,32 +1882,33 @@ function renderDeadlines() {
 
 function renderSummary() {
   // M-04: 選手×試合×種別の合計枚数サマリを表示
-  const summaryMap = {};  // key: "playerId_gameId" → { invite: qty, family: qty, paid: qty }
+  // Map のキーは `${playerId}\0${gameId}`（null バイト区切り）で separator 非依存にし、
+  // 値として { playerId, gameId, invite, family, paid } を保持する。
+  const summaryMap = new Map();  // key: "playerId\0gameId" → { playerId, gameId, invite, family, paid }
 
   applications.filter(a => a.status !== 'cancelled').forEach(a => {
-    const key = `${a.playerId}_${a.gameId}`;
-    if (!summaryMap[key]) summaryMap[key] = { invite: 0, family: 0, paid: 0 };
+    const key = `${a.playerId}\0${a.gameId}`;
+    if (!summaryMap.has(key)) summaryMap.set(key, { playerId: a.playerId, gameId: a.gameId, invite: 0, family: 0, paid: 0 });
+    const entry = summaryMap.get(key);
     const type = a.ticketType || 'unknown';
     if (type === 'invite' || type === 'family' || type === 'paid') {
       const qty = (a.quantityAdult || 0) + (a.quantityChild || 0) + (a.quantityInfant || 0) || 1;
-      summaryMap[key][type] += qty;
+      entry[type] += qty;
     }
   });
 
-  // 行データを生成: [playerId, gameId] でソート
+  // 行データを生成: [playerName, gameLabel] でソート
   const rows = [];
-  Object.keys(summaryMap).forEach(key => {
-    const [playerId, gameId] = key.split('_');
+  summaryMap.forEach(({ playerId, gameId, invite, family, paid }) => {
     const playerName = getPlayerName(playerId);
     const gameLabel = getGameLabel(gameId);
-    const summary = summaryMap[key];
     rows.push({
       playerName,
       gameLabel,
-      invite: summary.invite || 0,
-      family: summary.family || 0,
-      paid: summary.paid || 0,
-      total: (summary.invite || 0) + (summary.family || 0) + (summary.paid || 0)
+      invite,
+      family,
+      paid,
+      total: invite + family + paid
     });
   });
 
