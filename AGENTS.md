@@ -1,7 +1,7 @@
 > ⚠️ **MUST: Obsidian Brain 連携（外部脳）**
 > 本プロジェクトの全作業を Obsidian Vault に必ず記録する。サボり禁止。
 >
-> - **Vault**: `~/Desktop/ryui-workspace/projects/obsidian-brain/`
+> - **Vault**: `~/Desktop/ryui-workspace/obsidian-brain/`
 > - **本 PJ の Sessions ノート**: `Sessions/Happinets Family Tickets.md`（既存あれば追記、なければ Templates/session-template.md から新規作成）
 > - **本 PJ の Projects ノート**: `Projects/family-tickets.md`（既存あれば最新化、なければ新規作成）
 > - **詳細ルール**: `~/.Codex/AGENTS.md` の「IMPORTANT: Obsidian Brain 運用ルール（外部脳）」セクション必読
