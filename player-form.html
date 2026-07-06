@@ -2175,6 +2175,8 @@ function rememberSubmittedApplication(gameId, ticketType, quantityAdult = 0) {
   sessionStorage.setItem('myApplications', JSON.stringify(existingApps));
 }
 
+const MAX_SELECTABLE_GAMES = 5; // 直近5試合のみ選択可・それ以降は非表示（龍偉指示 2026-07-06）
+
 async function loadGames() {
   const result = await workerApiClient.getGames();
   if (!result.ok) { showAlert(tf('gameLoadFailed', { message: result.error?.message || result.error }), 'error'); return; }
@@ -2197,7 +2199,7 @@ async function loadGames() {
     hideAfter.setHours(12, 0, 0, 0); // ローカル時刻でセット（JSTで比較するため変換済みnowJstと比較）
     const hideAfterJst = new Date(new Date(hideAfter).toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
     return nowJst < hideAfterJst; // 翌日12:00JST以降は除外
-  });
+  }).slice(0, MAX_SELECTABLE_GAMES); // 直近5試合のみ選択可・それ以降は非表示（龍偉指示 2026-07-06）
   renderPaidGameOptions();
   buildInviteGrid();
   buildFamilyGrid();

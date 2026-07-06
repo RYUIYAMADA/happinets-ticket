@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "build:assets": "rm -rf public && mkdir -p public && cp ../index.html ../player-form.html ../player-dashboard.html ../admin.html ../api-config.js ../api-client.js ../liff-auth.js public/",
+    "deploy": "npm run build:assets && wrangler deploy"
   },
   "devDependencies": {
     "better-sqlite3": "^12.10.1"

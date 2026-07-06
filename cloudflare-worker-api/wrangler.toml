@@ -6,6 +6,10 @@ compatibility_date = "2026-06-01"
 [observability]
 enabled = true
 
+# 静的アセット配信（4画面のHTML/JSを Worker に同梱・html-share離脱）
+[assets]
+directory = "./public"
+
 # D1 データベース
 [[d1_databases]]
 binding       = "DB"
@@ -23,8 +27,8 @@ crons = ["0 9 * * *"]
 
 # 環境変数（秘密情報は wrangler secret put で設定）
 [vars]
-ALLOWED_ORIGIN = "https://app-five-pi-50.vercel.app"
-# TODO(龍偉): FE の本番 URL が確定後に必要なら上書きする
+ALLOWED_ORIGIN = "https://app-five-pi-50.vercel.app,https://family-tickets-api.row2014-2015-k.workers.dev"
+# TODO(龍偉): html-share/vercel の旧オリジンは移行完了後に削除可
 
 # secrets（wrangler secret put で設定・ここには書かない）
 # LINE_CHANNEL_SECRET
